@@ -175,6 +175,17 @@ void main() {
       expect(textTheme.bodyLarge?.fontWeight, isNull);
     });
 
+    test('字体族回落里带上 MiSans（miuix 的字体），应用自选字体仍然优先', () {
+      final theme = MiuixTheme.getThemeData(colors: MiuixColors.light);
+      for (final style in [
+        theme.textTheme.bodyLarge,
+        theme.textTheme.titleMedium,
+        theme.textTheme.labelSmall,
+      ]) {
+        expect(style?.fontFamilyFallback, contains('MiSans'));
+      }
+    });
+
     test('字体族与字重偏好覆盖到全部角色', () {
       final styled = miuixTextTheme(
         fontFamily: 'PiliFont',

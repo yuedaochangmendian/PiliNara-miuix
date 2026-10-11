@@ -34,12 +34,14 @@ TextTheme miuixTextTheme({
   String? fontFamily,
   FontWeight? fontWeight,
   Color? color,
+  List<String>? fontFamilyFallback,
 }) {
   TextStyle style(double fontSize, [FontWeight? weight]) => TextStyle(
     fontSize: fontSize,
     fontWeight: fontWeight ?? weight,
     fontFamily: fontFamily,
     color: color,
+    fontFamilyFallback: fontFamilyFallback,
   );
 
   return TextTheme(

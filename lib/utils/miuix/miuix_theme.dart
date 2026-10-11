@@ -27,6 +27,9 @@ import 'package:material_ui/material_ui.dart';
 ///   也就是 MIUI / HyperOS 的"连续圆角"，而不是普通圆弧；
 /// * 按压反馈换成 miuix 的整块淡入（[MiuixIndication]），替换掉 Material 的水波纹；
 /// * 输入框是 MIUI 的填充样式：`secondaryContainer` 底色、16 连续圆角、无描边。
+///
+/// 字体族回落里带上 miuix 的 MiSans：MIUI 设备系统自带这个字体，会直接命中；其它设备照常
+/// 回落到系统字体，应用自己的字体导入设置（`Pref.appFont`）优先级仍然最高。
 abstract final class MiuixTheme {
   /// 构造 miuix 主题。
   ///
@@ -42,6 +45,7 @@ abstract final class MiuixTheme {
     final textTheme = miuixTextTheme(
       fontFamily: fontFamily,
       fontWeight: fontWeight,
+      fontFamilyFallback: const ['MiSans'],
       // 组件（ListTile、Card、对话框标题等）从 TextTheme 的角色里取字色，Miui 的白字
       // 必须写进去，否则深色模式下会按黑色渲染。
       color: colors.onSurface,
