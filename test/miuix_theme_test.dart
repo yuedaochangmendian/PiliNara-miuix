@@ -17,7 +17,7 @@ import 'package:flex_seed_scheme/flex_seed_scheme.dart';
 import 'package:flutter/services.dart'
     show MethodCall, StandardMethodCodec, SystemChannels;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:get/get_navigation/src/routes/default_route.dart';
+import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
@@ -356,6 +356,23 @@ void main() {
         .map((t) => t.transform.getTranslation().x)
         .where((dx) => dx.abs() > 0.5);
 
+    /// 用平台通道模拟系统级预测返回（Android U+ 的边滑）。
+    Future<void> sendBackGesture(
+      WidgetTester tester,
+      String method, {
+      double progress = 0.35,
+    }) => tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+      SystemChannels.backGesture.name,
+      const StandardMethodCodec().encodeMethodCall(
+        MethodCall(method, <String, dynamic>{
+          'touchOffset': const <double>[100, 300],
+          'progress': progress,
+          'swipeEdge': 0,
+        }),
+      ),
+      (_) {},
+    );
+
     testWidgets('GetX → GetX：被覆盖页也会视差与压暗（框架自己不会驱动 GetPageRoute）', (
       tester,
     ) async {
@@ -526,7 +543,7 @@ void main() {
       expect(find.text('第二页'), findsOneWidget);
     });
 
-    testWidgets('预测返回：平台的终局信号一到就解除输入屏蔽', (tester) async {
+    testWidgets('预测返回：终局信号一到就解除屏蔽，返回后下面那一页还能点', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
@@ -554,32 +571,189 @@ void main() {
         find.byType(Navigator).first,
       );
 
-      // 用平台通道模拟系统级预测返回（Android U+ 的边滑）。
-      Future<void> send(String method, {double progress = 0.35}) =>
-          tester.binding.defaultBinaryMessenger.handlePlatformMessage(
-            SystemChannels.backGesture.name,
-            const StandardMethodCodec().encodeMethodCall(
-              MethodCall(method, <String, dynamic>{
-                'touchOffset': const <double>[100, 300],
-                'progress': progress,
-                'swipeEdge': 0,
-              }),
-            ),
-            (_) {},
-          );
-
-      await send('startBackGesture');
+      await sendBackGesture(tester, 'startBackGesture');
       await tester.pump();
       expect(navigator.userGestureInProgress, isTrue);
-      await send('updateBackGestureProgress', progress: 0.4);
+      await sendBackGesture(tester, 'updateBackGestureProgress', progress: 0.4);
       await tester.pump();
 
       // 用户反悔：平台给 cancel，屏蔽要立刻解除，弹簧自己落回。
-      await send('cancelBackGesture');
+      await sendBackGesture(tester, 'cancelBackGesture');
       await tester.pump();
       expect(navigator.userGestureInProgress, isFalse);
       await tester.pumpAndSettle();
       expect(find.text('第二页'), findsOneWidget);
+
+      // 提交：返回后下面那一页必须还能点。
+      await sendBackGesture(tester, 'startBackGesture', progress: 0.2);
+      await tester.pump();
+      await sendBackGesture(tester, 'commitBackGesture', progress: 0.4);
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsNothing);
+      expect(navigator.userGestureInProgress, isFalse);
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsOneWidget);
+    });
+
+    testWidgets('navigator 手势标记漏配会被对账清掉（否则整个应用点不动）', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const Scaffold(
+                        body: Center(child: Text('第二页')),
+                      ),
+                    ),
+                  ),
+                  child: const Text('打开'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      final navigator = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      // 模拟历史版本/异常时序留下的漏配：起手了，但没人停。
+      void leakUserGesture() => navigator.didStartUserGesture();
+      leakUserGesture();
+      await tester.pump();
+      expect(navigator.userGestureInProgress, isTrue);
+
+      // 一次普通的边缘手势（拖一点点后松手 → 回弹）落位结束后就该对账清掉。
+      final gesture = await tester.startGesture(const Offset(2, 300));
+      for (var i = 0; i < 5; i++) {
+        await gesture.moveBy(const Offset(20, 0));
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(navigator.userGestureInProgress, isFalse);
+
+      // 清掉之后页面还能点。
+      navigator.pop();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsOneWidget);
+    });
+
+    testWidgets('系统预测返回与应用内边缘手势同时来也不会漏掉手势标记', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const Scaffold(
+                        body: Center(child: Text('第二页')),
+                      ),
+                    ),
+                  ),
+                  child: const Text('打开'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      final navigator = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+
+      // 应用内边缘手势先接管。
+      final gesture = await tester.startGesture(const Offset(2, 300));
+      for (var i = 0; i < 5; i++) {
+        await gesture.moveBy(const Offset(20, 0));
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+      expect(navigator.userGestureInProgress, isTrue);
+
+      // 平台也可能为同一次边滑送来预测返回的起点（手势导航 + 应用内热区重叠）。
+      await sendBackGesture(tester, 'startBackGesture');
+      await tester.pump();
+
+      // 抬手：不能因为「起了两次只停一次」把全局标记漏掉，否则整个应用会一直点不动。
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(navigator.userGestureInProgress, isFalse);
+
+      // 首页确实还能点：再点一次能推开下一页。
+      if (find.text('第二页').evaluate().isNotEmpty) {
+        navigator.pop();
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsOneWidget);
+    });
+
+    testWidgets('应用真实路径：GetX 路由表下边缘跟手返回后首页仍可点击', (tester) async {
+      final controller = MiuixCoverController();
+      var homeTaps = 0;
+      await tester.pumpWidget(
+        GetMaterialApp(
+          theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
+          navigatorObservers: [MiuixNavigatorObserver(controller)],
+          builder: (context, child) =>
+              MiuixNavigationScope(controller: controller, child: child!),
+          initialRoute: '/',
+          getPages: [
+            GetPage(
+              name: '/',
+              page: () => Scaffold(
+                body: Center(
+                  child: TextButton(
+                    onPressed: () => homeTaps++,
+                    child: const Text('首页按钮'),
+                  ),
+                ),
+              ),
+            ),
+            GetPage(
+              name: '/second',
+              page: () => const Scaffold(
+                body: Center(child: Text('第二页')),
+              ),
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 应用里打开详情页走的就是这条：Get.toNamed。
+      Get.toNamed('/second');
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsOneWidget);
+
+      // 从边缘慢慢拖过一半屏宽后松手：应当返回首页。
+      final gesture = await tester.startGesture(const Offset(2, 300));
+      for (var i = 0; i < 30; i++) {
+        await gesture.moveBy(const Offset(15, 0));
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsNothing);
+
+      // 回到首页后必须还能点。
+      await tester.tap(find.text('首页按钮'));
+      await tester.pump();
+      expect(homeTaps, 1);
     });
 
     test('起手死区与抓取锚点与 miuix 一致', () {

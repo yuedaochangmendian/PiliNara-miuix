@@ -265,6 +265,15 @@ holding it through the settle leaves the whole app unclickable until the animati
 layer's own "hand-driven" flag (`MiuixCoverController.gestureDriven`) is what keeps the page and the
 covered page at 1 : 1 through the settle instead.
 
+Because that navigator flag is global (a single counter for the whole navigator), the layer never
+starts it twice and never leaves it behind: the in-app gesture and the platform's predictive back
+are mutually exclusive (whichever engages first owns the gesture, the other one declines), the flag
+is dropped at release, and every finished settle (and every disposed transition) reconciles it —
+if the layer is not gesturing and the controller reports no hand-driven page while the navigator
+still holds the flag, one `didStopUserGesture()` is issued to heal the leak. Without that, a single
+unpaired start would leave *every* route ignoring pointers, which is what "the page under the one I
+just left cannot be tapped" looks like from the outside.
+
 Predictive back is implemented in the same widget: the builder is the `WidgetsBindingObserver` that
 claims `handleStartBackGesture`, so Android U+ system edge gestures drive the page 1:1 through
 `handleStartBackGesture` / `handleUpdateBackGestureProgress`, and the platform's terminal signal

@@ -308,6 +308,7 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
       widget.swipeBack &&
       widget.route.isCurrent &&
       widget.route.popGestureEnabled &&
+      !_gestureStarted &&
       _spring == null;
 
   /// 由 `MiuixNavigationScope` 提供的覆盖效果控制器（没接就是 null）。
@@ -350,9 +351,13 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
       // 手势没走完就被销毁（路由被别处 pop、页面被移除）：延迟一拍清掉 navigator 的手势标记。
       final navigator = widget.route.navigator;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (navigator?.mounted ?? false) {
-          navigator!.didStopUserGesture();
+        if (navigator == null || !navigator.mounted) {
+          return;
         }
+        if (navigator.userGestureInProgress) {
+          navigator.didStopUserGesture();
+        }
+        _repairStuckUserGesture();
       });
     }
     super.dispose();
@@ -401,11 +406,38 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     _claimed = true;
     _anchorValue = widget.animation.value;
     _anchor = 1 - _anchorValue;
+    _beginUserGesture();
+    _userDriven = true;
+    _snapToFinger();
+  }
+
+  /// 起一次 navigator 手势（`didStartUserGesture`），只起一次。
+  ///
+  /// 这个标记是**全局计数**：多起一次就少停一次，而 `_ModalScopeState` 会给每条路由套
+  /// `IgnorePointer(ignoring: route.animation.status == reverse || navigator.userGestureInProgress)`
+  /// —— 漏掉一次「结束」就会让**整个应用**都点不动。所以「应用内边缘手势」和「平台预测返回」
+  /// 两条路都只允许起一次，谁先接管谁负责停。
+  void _beginUserGesture() {
+    if (_gestureStarted) {
+      return;
+    }
     widget.route.handleStartBackGesture(progress: _anchorValue);
     _gestureStarted = true;
-    _userDriven = true;
     _coverController?.gestureDriven = true;
-    _snapToFinger();
+  }
+
+  /// 对账兜底：我们不在手势态、controller 上也没有「手驱动」信号，navigator 却还挂着
+  /// 手势标记，说明有一次「起手」没配上「抬手」（历史版本、或平台异常时序）。
+  /// 这种状态会让整个应用点不动，这里直接补一次结束。
+  void _repairStuckUserGesture() {
+    if (_gestureStarted || (_coverController?.gestureDriven ?? false)) {
+      return;
+    }
+    final navigator = widget.route.navigator;
+    if (navigator == null || !navigator.userGestureInProgress) {
+      return;
+    }
+    navigator.didStopUserGesture();
   }
 
   /// miuix 的 `snapToFinger`：进度 = 锚点 + 手指超出死区的位移，严格 1:1、不过插值器。
@@ -470,7 +502,8 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
   @override
   bool handleStartBackGesture(PredictiveBackEvent backEvent) {
     // 非手势来源（返回键、ESC）不接管，交给框架自己的 pop 走程序化过场。
-    if (backEvent.isButtonEvent || !_canSwipe) {
+    // 应用内边缘手势已经接管这一次边滑时也不接管：两边各起一次手势标记就会少停一次。
+    if (backEvent.isButtonEvent || !_canSwipe || _gestureStarted) {
       return false;
     }
     _toward = 0;
@@ -478,10 +511,8 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     _claimed = true;
     _anchorValue = widget.animation.value;
     _anchor = 1 - _anchorValue;
-    widget.route.handleStartBackGesture(progress: _anchorValue);
-    _gestureStarted = true;
+    _beginUserGesture();
     _userDriven = true;
-    _coverController?.gestureDriven = true;
     _handlePredictiveBackEvent(backEvent);
     return true;
   }
@@ -577,10 +608,11 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     _coverController?.gestureDriven = false;
     widget.route.handleUpdateBackGestureProgress(progress: target);
     // 手势标记在抬手（或平台的终局信号）时就已经清掉了；这里只做框架自己的 pop：
-    // 位置已经落到 0，这一步只是记账。
-    if (commit) {
+    // 位置已经落到 0，这一步只是记账。路由已经不是当前页（例如框架自己先 pop 了）就不再动。
+    if (commit && widget.route.isCurrent) {
       widget.route.navigator?.pop();
     }
+    _repairStuckUserGesture();
   }
 
   /// 程序化过场用 miuix 烘焙好的曲线；手势（含落位弹簧）期间不过插值。
