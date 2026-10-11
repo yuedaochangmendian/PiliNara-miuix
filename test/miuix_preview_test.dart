@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:PiliPlus/utils/miuix/miuix_colors.dart';
 import 'package:PiliPlus/utils/miuix/miuix_drag_handle.dart';
 import 'package:PiliPlus/utils/miuix/miuix_blur.dart';
+import 'package:PiliPlus/utils/miuix/miuix_cascading_popup.dart';
 import 'package:PiliPlus/utils/miuix/miuix_icon.dart';
 import 'package:PiliPlus/utils/miuix/miuix_shapes.dart';
 import 'package:PiliPlus/utils/miuix/miuix_squircle.dart';
@@ -296,6 +297,81 @@ void main() {
     );
     // ignore: avoid_print
     print('captured blur');
+  });
+
+  // 级联弹层：点列表项后菜单从该项原地"长"出来；展开中途与完全展开各截一帧。
+  testWidgets('miuix 级联弹层预览', (tester) async {
+    await tester.runAsync(() async {
+      final bytes = await File(r'C:\Windows\Fonts\simhei.ttf').readAsBytes();
+      final loader = FontLoader(_fontFamily)
+        ..addFont(Future.value(ByteData.sublistView(Uint8List.fromList(bytes))));
+      await loader.load();
+    });
+    tester.view.physicalSize = const Size(760, 500);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+
+    final rowKey = GlobalKey();
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: MiuixTheme.getThemeData(
+          colors: MiuixColors.light,
+          fontFamily: _fontFamily,
+        ),
+        home: Scaffold(
+          body: ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              Card(
+                child: ListTile(
+                  key: rowKey,
+                  title: const Text('长按/点这里弹出菜单'),
+                  trailing: const MiuixIcon(MiuixIcons.more),
+                  onTap: () async {
+                    final box =
+                        rowKey.currentContext!.findRenderObject()! as RenderBox;
+                    final anchor = box.localToGlobal(Offset.zero) & box.size;
+                    await MiuixCascadingPopup.show<int>(
+                      context: rowKey.currentContext!,
+                      anchor: anchor,
+                      items: const [
+                        MiuixCascadingItem(value: 1, child: Text('稍后再看')),
+                        MiuixCascadingItem(value: 2, child: Text('下载')),
+                        MiuixCascadingItem(value: 3, child: Text('分享')),
+                        MiuixCascadingItem(
+                          value: 4,
+                          child: Text('不感兴趣'),
+                          destructive: true,
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('长按/点这里弹出菜单'));
+    // 先走一帧让点击回调把路由推起来，再推进动画，否则截到的是动画起点（裁剪区还贴在行上）。
+    await tester.pump();
+    // 展开中途。
+    await tester.pump(const Duration(milliseconds: 100));
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/miuix_cascading_mid.png'),
+    );
+    // 完全展开。
+    await tester.pumpAndSettle();
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/miuix_cascading_open.png'),
+    );
+    // ignore: avoid_print
+    print('captured cascading');
   });
 
   // 按压反馈：点一下之后必须淡出（否则会在被点过的标签上留一块色），按住时才显示叠加色。
