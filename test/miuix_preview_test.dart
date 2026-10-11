@@ -446,6 +446,104 @@ void main() {
       print('captured ink ${entry.$1}');
     }
   });
+
+  // 返回手势：从边缘慢慢拖出来时，页面 1:1 跟手、被覆盖的页向左视差 1/4 屏宽并压暗 50%。
+  testWidgets('miuix 返回手势预览', (tester) async {
+    await tester.runAsync(() async {
+      final bytes = await File(r'C:\Windows\Fonts\simhei.ttf').readAsBytes();
+      final loader = FontLoader(_fontFamily)
+        ..addFont(Future.value(ByteData.sublistView(Uint8List.fromList(bytes))));
+      await loader.load();
+    });
+    tester.view.physicalSize = const Size(760, 1340);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+
+    Widget body(Color color, String title, String note) => Material(
+      color: color,
+      child: Builder(
+        builder: (context) => Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(fontFamily: _fontFamily, fontSize: 30),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                note,
+                style: TextStyle(
+                  fontFamily: _fontFamily,
+                  fontSize: 15,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: MiuixTheme.getThemeData(
+          colors: MiuixColors.light,
+          fontFamily: _fontFamily,
+        ),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Stack(
+              children: [
+                body(
+                  MiuixColors.light.surface,
+                  '首页',
+                  '被覆盖时视差 1/4 屏宽，并压一层 50% 的暗色',
+                ),
+                Center(
+                  child: TextButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => Scaffold(
+                          body: body(
+                            MiuixColors.light.surfaceContainer,
+                            '视频详情',
+                            '从边缘往右拖：页面 1:1 跟手',
+                          ),
+                        ),
+                      ),
+                    ),
+                    child: const Text('打开详情页'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('打开详情页'));
+    await tester.pumpAndSettle();
+
+    // 手指从左边缘拖出来 140dp（逻辑宽度 380dp 的 37%），停在跟手状态。
+    final gesture = await tester.startGesture(const Offset(4, 300));
+    for (var i = 0; i < 7; i++) {
+      await gesture.moveBy(const Offset(20, 0));
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/miuix_back_gesture.png'),
+    );
+    // ignore: avoid_print
+    print('captured back gesture');
+
+    // 松手（远不到一半屏）：弹簧落回原位，页面还在。
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
 }
 
 class _Preview extends StatelessWidget {

@@ -6,11 +6,15 @@
 之后规划的功能和修复会记录在这里,等到正式发布后再移到下面对应的版本里（画饼.
 
 ### Added
+- **边缘跟手返回与预测性返回**：`MiuixPageTransitionsBuilder` 里补上 miuix-nav 的手势层——起手死区取系统 touch slop 且把死区里走过的位移一起算进去（`initialDismissTravelPx`）、接管后页面与手指严格 1:1 不过插值器、松手按「速度优先（≥ 1 进度单位/秒）、位置兜底（≥ 0.5）」判定 commit，并把松手瞬时速度当初速度交给同一根临界阻尼弹簧（stiffness 146 / damping 1）落位，位置与速度都连续；commit 时按 `commitVelocityFloor` 夹住种子速度，甩出去的松手不会弹过头。系统级的预测返回（Android U+）由同一个 widget 接管（它就是那个 `WidgetsBindingObserver`），所以系统边滑同样是 1:1 跟手 —— 顺带修好了「换掉 Android 的 `PredictiveBackPageTransitionsBuilder` 之后预测返回不再跟手」的问题。手势限定在 20dp 边缘带内（避免抢走横向列表与播放器手势），可用 `MiuixPageTransitionsBuilder(swipeBack: false)` 关掉。
+- **背景模糊（miuix-blur）**：`MiuixBlur` 取 miuix `BlurDefaults` 的 20dp 半径（上限 150dp），`MiuixBackdrop` 对应普通背景模糊、`MiuixProgressiveBlur` 用多段递增 sigma 近似渐变模糊；底栏改为 82% 不透明的 `surfaceContainer` + 20dp 模糊。miuix 叠的配色与抗色带噪点需要 shader 通道，Flutter 的 `BackdropFilter` 没有等价物，已在 `docs/miuix_theme.md` 里注明。
+- **级联弹层**：`MiuixCascadingPopup` 复现菜单从被点项原地长出来的效果——裁剪区从锚点矩形插值到弹层矩形（`popupClipReveal`），内容从 0.15 缩放到 1（`ENTER_SCALE_FROM` / `ENTER_SCALE_RANGE`），16 连续圆角、`windowDimming` 遮罩，宽度 200–288dp、最多 8 项。
 - **miuix 图标集**：miuix 的图标是矢量（156 个、五档字重），按默认的 Regular 那档转成 Flutter 的路径数据（生成器 `tool/gen_miuix_icons.dart`，Y 轴翻转与 24×24 缩放都在生成时烘进去），新增自绘组件 `MiuixIcon`（取色跟随 `IconTheme`）；设置页与共享组件里语义一一对应的那批已换成 miuix 图标（返回/关闭/更多/搜索/刷新/删除/下载/分享/设置/加号/播放暂停/清除/筛选/排序/复制/编辑/信息/帮助/锁/更新），业务页面暂不动。
 - **滚动边界触感**：`MiuixScrollEndHaptic` 按 miuix 的 `scrollEndHaptic`——抛掷到列表头/尾、边界把速度吃掉时震一下（可用速度 > 1、同一边界只震一次、往回滚超过 1 复位），触感用 `HapticFeedback.selectionClick()`；判据是纯函数（有单测），在应用 builder 处接一次即全应用生效。
 - **字体回落 MiSans**：不打包字体，而是把 MiSans 放进 TextTheme 的 `fontFamilyFallback`——MIUI 设备系统自带会直接命中，其它设备回落系统字体，应用自选的字体仍然优先。
 
 ### Changed
+- **页面转场统一到 miuix**：GetX 的 `defaultTransition` 从 `rightToLeftWithFade` 改为 `Transition.native`（它会落到 `ThemeData.pageTransitionsTheme`），于是所有 `GetPageRoute` 的进场也用 miuix 的几何、曲线与手势层，不再是 GetX 自己那套时长与曲线。被覆盖页的视差/压暗同样改成「视觉是深度的纯函数」：手势期间被覆盖页也 1:1 跟着手指，不再被 500ms 那条曲线提前拉满。
 - **顶栏按 miuix 规格**：收起高度 52（原来用了 Material 的 `kToolbarHeight` 56，收起高度、`toolbarHeight`、折叠比例都偏），`MiuixShapes` 补齐标题 26 / 图标 16 / 大标题下边距 4 / 副标题下边距 8 / 小顶栏中心 50。
 - **复选框/单选框改成 MIUI 的圆形**（miuix 用 `CircleShape`）：填充按状态取（选中 `primary`、未选中 `secondary`、禁用 `disabled*`），对勾 `onPrimary`，去掉 Material 描边；标签行取 miuix 配色（指示条 `primary`、分隔线 `dividerLine`）。
 - **纯黑模式保留 miuix 的表面层次**：miuix 的抬升靠调色板层次（深色下 `surface` 纯黑 → `surfaceContainer` `#242424` → `surfaceContainerHighest` `#2D2D2D`），不再把容器按比例额外压暗。

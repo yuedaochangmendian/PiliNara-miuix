@@ -291,6 +291,118 @@ void main() {
   });
 
   group('miuix 动效', () {
+    testWidgets('边缘跟手返回：慢慢拖过一半屏才返回，拖一点点会弹回', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  // 走主题的 pageTransitionsTheme，也就是 MiuixPageTransitionsBuilder。
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const Scaffold(
+                        body: Center(child: Text('第二页')),
+                      ),
+                    ),
+                  ),
+                  child: const Text('打开'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsOneWidget);
+
+      // 慢慢拖一点点（远不到半屏）：应该弹回，页面还在。
+      var gesture = await tester.startGesture(const Offset(2, 300));
+      for (var i = 0; i < 4; i++) {
+        await gesture.moveBy(const Offset(10, 0));
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsOneWidget);
+
+      // 慢慢拖过一半屏宽：按 miuix 的判据（死区内看位置）应当返回。
+      gesture = await tester.startGesture(const Offset(2, 300));
+      for (var i = 0; i < 30; i++) {
+        await gesture.moveBy(const Offset(15, 0));
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsNothing);
+    });
+
+    test('起手死区与抓取锚点与 miuix 一致', () {
+      // 静止起手：进度就是手指位移，拖到底停在 MAX_FINGER_PROGRESS 之前。
+      expect(MiuixMotion.anchoredProgress(anchor: 0, fingerProgress: 0), 0);
+      expect(
+        MiuixMotion.anchoredProgress(anchor: 0, fingerProgress: 0.25),
+        0.25,
+      );
+      expect(
+        MiuixMotion.anchoredProgress(anchor: 0, fingerProgress: 9),
+        MiuixMotion.maxFingerProgress,
+      );
+      // 抓住一次进行中的过场（锚点 0.3）：第一帧不跳变，往回拖最多回到静止位。
+      expect(
+        MiuixMotion.anchoredProgress(anchor: 0.3, fingerProgress: 0),
+        0.3,
+      );
+      expect(
+        MiuixMotion.anchoredProgress(anchor: 0.3, fingerProgress: -0.5),
+        0,
+      );
+    });
+
+    test('落位弹簧的种子速度夹在不过冲的界限内', () {
+      // 距离 0.5：临界阻尼弹簧只要 v₀ 不小于 -√146·0.5 ≈ -6.04 就不会越过目标。
+      final floor = -math.sqrt(MiuixMotion.settleStiffness) * 0.5;
+      expect(floor, closeTo(-6.042, 0.01));
+      expect(
+        MiuixMotion.settleSeedVelocity(
+          towardTargetVelocity: -20,
+          distance: 0.5,
+        ),
+        closeTo(floor, 1e-9),
+      );
+      // 慢速松手原样保留速度（跟手 → 弹簧速度连续）。
+      expect(
+        MiuixMotion.settleSeedVelocity(
+          towardTargetVelocity: -2,
+          distance: 0.5,
+        ),
+        -2,
+      );
+      // 允许过冲时不夹。
+      expect(
+        MiuixMotion.settleSeedVelocity(
+          towardTargetVelocity: -20,
+          distance: 0.5,
+          clampOvershoot: false,
+        ),
+        -20,
+      );
+    });
+
+    test('预测返回的完成信号默认接受，只有明显回弹才否决', () {
+      expect(MiuixMotion.shouldAcceptPredictiveBackCompletion(), isTrue);
+      expect(
+        MiuixMotion.shouldAcceptPredictiveBackCompletion(velocity: -0.5),
+        isTrue,
+      );
+      expect(
+        MiuixMotion.shouldAcceptPredictiveBackCompletion(velocity: -1),
+        isFalse,
+      );
+    });
+
     test('滚动边界触感的判据与 miuix 一致', () {
       expect(MiuixScrollHaptic.availableVelocityThreshold, 1);
       expect(MiuixScrollHaptic.resetThreshold, 1);

@@ -311,9 +311,10 @@ class MyApp extends StatelessWidget {
       supportedLocales: const [Locale("zh", "CN"), Locale("en", "US")],
       initialRoute: '/',
       getPages: Routes.getPages,
-      // 页面过渡交给 miuix 那套：GetX 这条与 miuix 的整屏滑入最接近，具体曲线与时长见
-      // ThemeData.pageTransitionsTheme（MaterialPageRoute 走 MiuixPageTransitionsBuilder）。
-      defaultTransition: Transition.rightToLeftWithFade,
+      // 页面过渡全部交给 miuix 那套：Transition.native 会落到 ThemeData.pageTransitionsTheme，
+      // 也就是 MiuixPageTransitionsBuilder（miuix 的几何 + 曲线 + 边缘跟手返回 + 预测性返回）。
+      // GetX 自己的 rightToLeftWithFade 只覆盖进场的滑入，跟手动效与曲线都不是 miuix 的。
+      defaultTransition: Transition.native,
       builder: FlutterSmartDialog.init(
         toastBuilder: CustomToast.new,
         loadingBuilder: LoadingWidget.new,

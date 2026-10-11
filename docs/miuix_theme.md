@@ -171,6 +171,28 @@ MIUI stretches the scrollable at its ends instead of showing the Android glow. P
 `CustomScrollBehavior` already used `StretchingOverscrollIndicator` on Android, which matches
 miuix's `MiuixOverscrollEffect`, so this needed no change.
 
+### Backdrop blur
+
+`lib/utils/miuix/miuix_blur.dart` is the `miuix-blur` module: `BlurDefaults` is a 20 dp radius with
+a 150 dp cap, and `MiuixBlur.sigmaFor` maps a radius onto `ImageFilter.blur`'s sigma (a 1 : 1.7
+empirical ratio). `MiuixBackdrop` is the plain backdrop (blur plus a tint), `MiuixProgressiveBlur`
+approximates the progressive variant with a stack of increasing sigmas. The bottom navigation bar
+uses it: 82 % opaque `surfaceContainer` plus a 20 dp blur of the content behind it.
+
+miuix's blur also mixes in `BlurColors` and an anti-banding noise overlay; neither can be
+reproduced with `BackdropFilter` (it takes a fixed sigma and has no shader channel), so they are
+left out — the difference is not visible at these radii.
+
+### Cascading popup
+
+`lib/utils/miuix/miuix_cascading_popup.dart` reproduces the menu that grows out of the row you
+tapped (`CascadingMorphContent` + `CascadingListPopupLayout`): the clip rect is lerped from the
+anchor rect to the popup rect (`popupClipReveal`) while the content scales from
+`ENTER_SCALE_FROM` 0.15 to 1 (`ENTER_SCALE_RANGE` 0.85), the surface is a 16 dp continuous corner,
+the barrier is `windowDimming`, and the popup is clamped to 200–288 dp with at most 8 rows before
+it scrolls. It is a transparent route plus a `ClipPath`, with the curve and duration from
+`MiuixMotion`.
+
 ### Motion
 
 `lib/utils/miuix/miuix_motion.dart` carries miuix's own timing instead of Flutter's defaults:
@@ -187,11 +209,64 @@ miuix's `MiuixOverscrollEffect`, so this needed no change.
 
 The theme installs `MiuixPageTransitionsBuilder` for every platform: the entering page slides in
 full width from the trailing edge and the covered page parallaxes a quarter width with a 10 % alpha
-falloff — miuix's `NavTransitions.MiuixDefault` geometry with the motion above. Page-routed screens
-go through GetX, which mirrors the same slide (its `rightToLeftWithFade`).
+falloff — miuix's `NavTransitions.MiuixDefault` geometry with the motion above.
 
 The covered page is additionally dimmed by up to 50 % (`NavDisplayEffects.dimAmount`) as the motion
 runs, which is how miuix's effect layer darkens the layer below the entering one.
+
+GetX drives most in-app navigation, and its `Transition.native` defers to
+`ThemeData.pageTransitionsTheme`, so every `GetPageRoute` uses this builder too (GetX's own
+`rightToLeftWithFade` would only cover the entering slide, with GetX's timing). One GetX limitation
+carries over: `GetPageRouteTransitionMixin.canTransitionTo` only accepts a
+`MaterialRouteTransitionMixin` on top, so when one GetX route covers another, the covered one does
+not run its secondary animation — the entering slide, the motion and the gesture all still apply.
+
+### Back gesture (miuix-nav)
+
+The same builder carries miuix-nav's gesture layer, so a page can be peeled away by finger. The
+three phases follow `NavSwipeArbitrator` / `snapToFinger` / `navBackCommitDecision`:
+
+* **Engagement.** The activation dead zone is the system touch slop and only dismissal-direction
+  travel counts: the page does not move until the finger has travelled past `kTouchSlop`, and the
+  travel inside the dead zone is added on top (`initialDismissTravelPx = towardTravelPx - touchSlop`),
+  so the page catches up instead of restarting at the claim point. A drag that goes *against*
+  dismissal past the dead zone, or whose cross-axis travel dominates, is left to the page.
+  `dragStartBehavior: down` is what makes the pre-claim travel available, exactly as miuix measures
+  it from the down event.
+* **Follow.** Once claimed there is no interpolation at all — the route's animation value *is* the
+  finger position (miuix's `snapToFinger`, "no easing on this axis"). Cross-axis wiggle neither
+  steals nor cancels; a gesture only ends when the finger lifts.
+* **Settle.** The release is classified by `navBackCommitDecision` — velocity first (≥ 1 progress
+  unit/s decides by sign), position as the fallback (≥ 0.5 commits) — and the release velocity is
+  handed to the shared spring (`NavDriverSpec.STIFFNESS` 146, `DAMPING_RATIO` 1) as its initial
+  velocity, so position *and* velocity stay continuous. A commit floors that seed at
+  `-sqrt(stiffness) * distance` (`commitVelocityFloor`), which is the exact no-overshoot bound of a
+  critically damped spring, so a flung release cannot bounce past the popped position. The
+  visibility threshold is miuix's `VISIBILITY_THRESHOLD` (0.0025).
+
+Predictive back is implemented in the same widget: the builder is the `WidgetsBindingObserver` that
+claims `handleStartBackGesture`, so Android U+ system edge gestures drive the page 1:1 through
+`handleStartBackGesture` / `handleUpdateBackGestureProgress`, and the platform's terminal signal
+settles through the same spring (`navBackCompletionDecision`, velocity 0 → accept). This also
+restores the finger-following preview that registering a custom builder for Android otherwise
+replaces: `PredictiveBackPageTransitionsBuilder` is what normally claims the gesture.
+
+Known differences from miuix-nav:
+
+* miuix attaches `navSwipeDismiss` to the display container (a transition in flight can be grabbed
+  anywhere) and it is opt-in per route (`swipeDismiss` defaults to `NavSwipeDirection.None`). Here
+  the in-app gesture is limited to a 20 dp leading-edge strip — Android's own back-gesture hot
+  zone — so it cannot steal horizontal lists or the player's seek gesture, and it is on by default
+  (`MiuixPageTransitionsBuilder(swipeBack: false)` disables it).
+* Flutter's gesture arena decides content-first ownership instead of miuix's pointer-consumption
+  arbitration; the verdicts agree in practice (a drag that belongs to an inner scrollable wins the
+  arena), but the "one move of confirmation" window has no equivalent.
+* miuix drives one shared float for the whole stack, so a gesture can interrupt an in-flight
+  transition for any pair of entries. Here one route's animation is grabbed; grabbing mid-flight
+  still works, because `handleStartBackGesture` stops the running animation and the anchor keeps the
+  first frame jump-free, but each route settles on its own.
+* `NavGesture`'s `swipeEdge` / `touchY` context (transitions that pivot around the touch point) is
+  not surfaced — no preset in this app uses it.
 
 ### Icons
 
