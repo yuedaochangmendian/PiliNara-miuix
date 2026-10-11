@@ -201,6 +201,15 @@ it scrolls. It is a transparent route plus a `ClipPath`, with the curve and dura
   (`NavProgrammaticEasing`): the step response of an underdamped spring (response 0.8, damping 0.95)
   solved point by point — a brisk middle and a long tail, played over
   `MiuixMotion.programmaticDuration` (500 ms, `NavDriverSpec.PROGRAMMATIC_DURATION_MILLIS`).
+* `MiuixMotion.returning` is the same baked formula with the response tightened to 0.5, used for the
+  pop direction only, together with `returnDuration` (240 ms) and a stiffer settle spring
+  (`returnStiffness` 260, still critically damped) for gesture commits. This is a deliberate
+  PiliNara-side deviation from miuix, which plays one 500 ms curve in both directions: a return
+  already knows where it is going, and half a second of waiting feels sluggish. The tightened curve
+  is out of the way after ~40 % of the interval (97 % of the screen) instead of ~70 %, so the
+  remaining tail happens off-screen. GetX hard-codes its route duration at 300 ms
+  (`GetPageRouteTransitionMixin.transitionDuration`), so `returnDuration` only reaches routes built
+  through `MaterialRouteTransitionMixin` — the faster curve applies everywhere.
 * `decelerate` / `accelerate` / `sinOut` are miuix's `DecelerateEasing`, `AccelerateEasing` and
   `SinOutEasing`.
 * `spring(damping, response)` is `folmeSpring`: stiffness `(2π / response)²`, damping ratio as given.

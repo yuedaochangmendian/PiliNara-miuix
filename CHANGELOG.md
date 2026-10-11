@@ -15,6 +15,7 @@
 - **字体回落 MiSans**：不打包字体，而是把 MiSans 放进 TextTheme 的 `fontFamilyFallback`——MIUI 设备系统自带会直接命中，其它设备回落系统字体，应用自选的字体仍然优先。
 
 ### Changed
+- **返回动画加快**：进场照旧用 miuix 那条 500ms 的烘焙弹簧曲线（`programmatic`，response 0.8）；**返回单独用一条更快的**（`returning`）——同一条烘焙公式、response 收到 0.5，四成时间就滑出去 97%（原来要七成），剩下的尾巴落在屏幕外，所以整体看起来快了一截。配套：`reverseTransitionDuration` 从 300ms（builder 默认）/500ms（miuix）压到 240ms（走 `MaterialPageRoute` 的路由生效；GetX 的 `GetPageRoute` 把时长写死成 300ms，改不动依赖，但曲线同样生效），手势滑回去的落位弹簧刚度从 146 收到 260（仍是临界阻尼、不回弹，过冲夹取跟着这根弹簧走）。这是本项目对 miuix 参数的调整（miuix 进出共用同一条曲线），已在 `docs/miuix_theme.md` 里注明。
 - **页面转场统一到 miuix**：GetX 的 `defaultTransition` 从 `rightToLeftWithFade` 改为 `Transition.native`（它会落到 `ThemeData.pageTransitionsTheme`），于是所有 `GetPageRoute` 的进场也用 miuix 的几何、曲线与手势层，不再是 GetX 自己那套时长与曲线。被覆盖页的视差/压暗同样改成「视觉是深度的纯函数」：手势期间被覆盖页也 1:1 跟着手指，不再被 500ms 那条曲线提前拉满。
 - **顶栏按 miuix 规格**：收起高度 52（原来用了 Material 的 `kToolbarHeight` 56，收起高度、`toolbarHeight`、折叠比例都偏），`MiuixShapes` 补齐标题 26 / 图标 16 / 大标题下边距 4 / 副标题下边距 8 / 小顶栏中心 50。
 - **复选框/单选框改成 MIUI 的圆形**（miuix 用 `CircleShape`）：填充按状态取（选中 `primary`、未选中 `secondary`、禁用 `disabled*`），对勾 `onPrimary`，去掉 Material 描边；标签行取 miuix 配色（指示条 `primary`、分隔线 `dividerLine`）。

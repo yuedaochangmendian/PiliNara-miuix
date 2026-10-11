@@ -36,8 +36,18 @@ abstract final class MiuixMotion {
   /// miuix 导航的程序化过场时长（`PROGRAMMATIC_DURATION_MILLIS`）。
   static const Duration programmaticDuration = Duration(milliseconds: 500);
 
+  /// 返回（pop）的时长，比进场短。
+  ///
+  /// miuix 进出用同一条 500ms 的曲线，这里把返回单独收紧到 240ms —— 返回时用户已经知道要去哪，
+  /// 等半秒会显得拖沓。注意 GetX 的 `GetPageRoute` 把时长写死成 300ms（不动依赖改不了），
+  /// 应用里绝大多数路由走的是它，所以加快主要还是靠 [returning] 这条曲线。
+  static const Duration returnDuration = Duration(milliseconds: 240);
+
   /// miuix 落位弹簧的刚度（`NavDriverSpec.STIFFNESS`，深度轴单位 = 条目数）。
   static const double settleStiffness = 146;
+
+  /// 返回（pop）落位弹簧的刚度：临界阻尼的形状不变，只把刚度收紧，让页面更快走完。
+  static const double returnStiffness = 260;
 
   /// miuix 弹簧的可见阈值（`NavDriverSpec.VISIBILITY_THRESHOLD`）：离目标不到 0.25% 就算收敛。
   static const double settleVisibilityThreshold = 0.0025;
@@ -56,6 +66,13 @@ abstract final class MiuixMotion {
 
   /// miuix 导航的过场曲线（烘焙好的弹簧阶跃响应，response = 0.8、damping = 0.95）。
   static const Curve programmatic = _MiuixProgrammaticCurve();
+
+  /// 返回（pop）用的曲线：同一条烘焙公式，但 response 从 0.8 收到 0.5。
+  ///
+  /// 这样它在四成的时间里就滑出屏幕 97%（原来要七成），剩下的尾巴在屏幕外看不见 ——
+  /// 等于把「返回」整体加快。这是本项目对 miuix 参数的调整（miuix 进出共用
+  /// `NavProgrammaticEasing`）。
+  static const Curve returning = _MiuixReturnCurve();
 
   /// miuix 的 `DecelerateEasing`：1 − (1 − t)²。
   static const Curve decelerate = _MiuixDecelerateCurve();
@@ -88,6 +105,13 @@ abstract final class MiuixMotion {
     mass: 1,
     stiffness: 146,
     damping: 2 * 12.0830459736, // 2 * sqrt(146) ≈ 临界阻尼
+  );
+
+  /// 返回（pop）落位的弹簧：同样临界阻尼、不回弹，刚度收紧到 [returnStiffness]。
+  static SpringDescription get returnSpring => const SpringDescription(
+    mass: 1,
+    stiffness: returnStiffness,
+    damping: 2 * 16.1245154966, // 2 * sqrt(260) ≈ 临界阻尼
   );
 
   /// miuix 导航的落位判定阈值（`NavDriverSpec.COMMIT_VELOCITY_THRESHOLD`，单位是「每秒多少屏」）。
@@ -141,13 +165,12 @@ abstract final class MiuixMotion {
     required double towardTargetVelocity,
     required double distance,
     bool clampOvershoot = true,
+    double stiffness = settleStiffness,
   }) {
     if (!clampOvershoot) {
       return towardTargetVelocity;
     }
-    final floor = distance <= 0
-        ? 0.0
-        : -math.sqrt(settleStiffness) * distance;
+    final floor = distance <= 0 ? 0.0 : -math.sqrt(stiffness) * distance;
     return towardTargetVelocity.clamp(floor, double.infinity);
   }
 }
@@ -162,6 +185,29 @@ class _MiuixProgrammaticCurve extends Curve {
   const _MiuixProgrammaticCurve();
 
   static const double _response = 0.8;
+  static const double _damping = 0.95;
+
+  @override
+  double transformInternal(double t) {
+    const omega = 2 * math.pi / _response;
+    const k = omega * omega;
+    const c = _damping * 4 * math.pi / _response;
+    final w = math.sqrt(4 * k - c * c) / 2;
+    const r = -c / 2;
+    final c2 = r / w;
+    final decay = math.exp(r * t);
+    return decay * (-math.cos(w * t) + c2 * math.sin(w * t)) + 1;
+  }
+}
+
+/// 返回（pop）曲线：与 [_MiuixProgrammaticCurve] 同一条公式，只把 response 收到 0.5。
+///
+/// response 越小弹簧越快：四成时间就走到 97%，剩下的尾巴在屏幕外，所以「返回」看起来更快，
+/// 但仍是同一条烘焙弹簧的形状（单调、不回弹）。
+class _MiuixReturnCurve extends Curve {
+  const _MiuixReturnCurve();
+
+  static const double _response = 0.5;
   static const double _damping = 0.95;
 
   @override
@@ -231,6 +277,14 @@ class MiuixPageTransitionsBuilder extends PageTransitionsBuilder {
   /// miuix-nav 的 `swipeDismiss` 默认是 `NavSwipeDirection.None`（所有内置预设都不开，要按路由
   /// 显式声明）；本项目按需求默认打开。需要让某条路由的横向手势完全独占时可以关掉。
   final bool swipeBack;
+
+  /// 进场沿用 miuix 的 500ms（`PROGRAMMATIC_DURATION_MILLIS`）。
+  @override
+  Duration get transitionDuration => MiuixMotion.programmaticDuration;
+
+  /// 返回短一些（[MiuixMotion.returnDuration]），配合 [MiuixMotion.returning] 更早滑出屏幕。
+  @override
+  Duration get reverseTransitionDuration => MiuixMotion.returnDuration;
 
   @override
   Widget buildTransitions<T>(
@@ -563,15 +617,20 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     final to = commit ? 0.0 : 1.0;
     // value = 1 - progress，所以朝 pop 的进度速度在值轴上是负的（miuix 把进度速度取负交给深度轴）。
     // commit 时按 `commitVelocityFloor` 夹住过冲；cancel 的目标在上方，临界阻尼不会越过它。
+    // commit（返回）用更硬的弹簧：形状不变（临界阻尼），但更快把页面送走。
+    final stiffness = commit
+        ? MiuixMotion.returnStiffness
+        : MiuixMotion.settleStiffness;
     final seed = MiuixMotion.settleSeedVelocity(
       towardTargetVelocity: -progressVelocity,
       distance: (to - from).abs(),
       clampOvershoot: commit,
+      stiffness: stiffness,
     );
     _springTarget = to;
     _commitPending = commit;
     _spring = SpringSimulation(
-      MiuixMotion.settleSpring,
+      commit ? MiuixMotion.returnSpring : MiuixMotion.settleSpring,
       from,
       to,
       seed,
@@ -615,12 +674,14 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     _repairStuckUserGesture();
   }
 
-  /// 程序化过场用 miuix 烘焙好的曲线；手势（含落位弹簧）期间不过插值。
+  /// 程序化过场用 miuix 烘焙好的曲线；返回用更快的那条（[MiuixMotion.returning]）；
+  /// 手势（含落位弹簧）期间不过插值。
   double _curved(Animation<double> animation, double t) {
     final curve = animation.status == AnimationStatus.reverse
-        ? MiuixMotion.programmatic.flipped
+        ? MiuixMotion.returning
         : MiuixMotion.programmatic;
-    return curve.transform(t.clamp(0.0, 1.0));
+    // 烘焙弹簧在尾巴上会有一点点过冲（damping 0.95），这里夹回来，别让页面越过终点。
+    return curve.transform(t.clamp(0.0, 1.0)).clamp(0.0, 1.0);
   }
 
   @override

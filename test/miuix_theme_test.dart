@@ -868,6 +868,51 @@ void main() {
       }
     });
 
+    test('返回比进场快：时长更短、曲线更早走完、落位弹簧更硬', () {
+      expect(
+        MiuixMotion.returnDuration,
+        lessThan(MiuixMotion.programmaticDuration),
+      );
+      const enter = MiuixMotion.programmatic;
+      const back = MiuixMotion.returning;
+      expect(back.transform(0), closeTo(0, 0.0001));
+      expect(back.transform(1), closeTo(1, 0.001));
+      // 同一条烘焙弹簧的形状：主体单调不回弹（尾巴上阻尼 0.95 带来的过冲在 0.1% 以内）。
+      var previous = -1.0;
+      for (var i = 0; i <= 16; i++) {
+        final value = back.transform(i / 20);
+        expect(value, greaterThanOrEqualTo(previous));
+        previous = value;
+      }
+      expect(back.transform(1), closeTo(1, 0.001));
+      // 四成时间就滑出去 97%（进场同一时刻只有 84%），尾巴落在屏幕外。
+      expect(back.transform(0.4), greaterThan(0.95));
+      expect(back.transform(0.4), greaterThan(enter.transform(0.4)));
+      // 返回落位用更硬的临界阻尼弹簧。
+      expect(
+        MiuixMotion.returnSpring.stiffness,
+        greaterThan(MiuixMotion.settleSpring.stiffness),
+      );
+      // 过冲的夹取跟着这根弹簧走。
+      expect(
+        MiuixMotion.settleSeedVelocity(
+          towardTargetVelocity: -20,
+          distance: 0.5,
+          stiffness: MiuixMotion.returnStiffness,
+        ),
+        closeTo(-math.sqrt(MiuixMotion.returnStiffness) * 0.5, 1e-9),
+      );
+      // 不过冲的界限仍成立：更慢的松手原样保留速度。
+      expect(
+        MiuixMotion.settleSeedVelocity(
+          towardTargetVelocity: -2,
+          distance: 0.5,
+          stiffness: MiuixMotion.returnStiffness,
+        ),
+        -2,
+      );
+    });
+
     test('三条缓动与 miuix 的 anim 模块一致', () {
       expect(MiuixMotion.decelerate.transform(0.5), closeTo(0.75, 0.001));
       expect(MiuixMotion.accelerate.transform(0.5), closeTo(0.25, 0.001));
