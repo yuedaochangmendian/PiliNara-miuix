@@ -214,12 +214,24 @@ falloff — miuix's `NavTransitions.MiuixDefault` geometry with the motion above
 The covered page is additionally dimmed by up to 50 % (`NavDisplayEffects.dimAmount`) as the motion
 runs, which is how miuix's effect layer darkens the layer below the entering one.
 
-GetX drives most in-app navigation, and its `Transition.native` defers to
-`ThemeData.pageTransitionsTheme`, so every `GetPageRoute` uses this builder too (GetX's own
-`rightToLeftWithFade` would only cover the entering slide, with GetX's timing). One GetX limitation
-carries over: `GetPageRouteTransitionMixin.canTransitionTo` only accepts a
-`MaterialRouteTransitionMixin` on top, so when one GetX route covers another, the covered one does
-not run its secondary animation — the entering slide, the motion and the gesture all still apply.
+GetX drives all in-app navigation (189 `Get.toNamed`, 49 `Get.to`, no per-call `transition:` or
+`duration:` overrides), and its `Transition.native` defers to `ThemeData.pageTransitionsTheme`, so
+every `GetPageRoute` uses this builder too — GetX's own `rightToLeftWithFade` would only cover the
+entering slide, with GetX's timing.
+
+The covered page needs one supplement. Flutter hooks the page below up only when
+`previousRoute.canTransitionTo(nextRoute)` **and** `nextRoute.canTransitionFrom(previousRoute)` are
+both true (`TransitionRoute._updateSecondaryAnimation`), and GetX's
+`GetPageRouteTransitionMixin.canTransitionTo` accepts nothing but a `MaterialRouteTransitionMixin`
+on top — so for GetX → GetX the covered page never ran its secondary animation at all, and the
+quarter-width parallax and the dim were invisible there. `lib/utils/miuix/miuix_navigation.dart`
+adds that driver back: `MiuixNavigatorObserver` keeps the route stack, applies the framework's own
+test, and hands `MiuixCoverController` the animation of the route above for every pair the
+framework will not drive itself. `MiuixNavigationScope` (installed above the navigator in
+`MaterialApp.builder`) passes it down to `MiuixPageTransition`, which uses it in place of
+`secondaryAnimation`. The entry is dropped again when that animation reaches zero, and because the
+condition mirrors the framework exactly, no cover effect is ever applied twice (Material → Material
+stays the framework's own single one).
 
 ### Back gesture (miuix-nav)
 

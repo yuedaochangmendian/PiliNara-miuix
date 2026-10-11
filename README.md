@@ -40,6 +40,7 @@
 - 圆角、字阶与组件配色取自 miuix 各组件的默认值：卡片/按钮/输入框 16、对话框 32、底部弹层 28、提示气泡 12、顶部栏 52dp；字阶是 miuix 的十四个槽位。
 - 连续圆角（squircle）、miuix 的按压反馈、MIUI 填充式输入框、弹层拖拽手柄，以及 miuix 自己的动效曲线与时长（含页面过渡）也都接进了主题。
 - 更进阶的 miuix 特性也做了：miuix 图标集（156 个矢量图标）、背景模糊（20dp，底栏用上了）、从被点项原地长出来的级联弹层、miuix-nav 的边缘跟手返回 + 预测性返回（共享落位弹簧）。
+- 导航整层都换成了 miuix 那套：GetX 的每一条路由都用 miuix 的过场几何、曲线与手势，被覆盖页也会视差 1/4 屏宽并压暗 50%（GetX 自己的 `canTransitionTo` 不给 GetX 路由驱动这一步，由 `MiuixNavigatorObserver` 补上）。
 - Android 包名是 `com.example.pilinara.miuix`，可以与官方 PiliNara 同时安装、互不覆盖（首次安装是这个新包名，设置需要用应用内的导出/导入搬一次）。
 - 实现细节、Material ↔ miuix 的映射表与移植的限制见 [docs/miuix_theme.md](docs/miuix_theme.md)。
 

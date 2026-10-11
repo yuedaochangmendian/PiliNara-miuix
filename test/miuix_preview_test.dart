@@ -7,6 +7,7 @@ import 'package:PiliPlus/utils/miuix/miuix_drag_handle.dart';
 import 'package:PiliPlus/utils/miuix/miuix_blur.dart';
 import 'package:PiliPlus/utils/miuix/miuix_cascading_popup.dart';
 import 'package:PiliPlus/utils/miuix/miuix_icon.dart';
+import 'package:PiliPlus/utils/miuix/miuix_navigation.dart';
 import 'package:PiliPlus/utils/miuix/miuix_shapes.dart';
 import 'package:PiliPlus/utils/miuix/miuix_squircle.dart';
 import 'package:PiliPlus/utils/miuix/miuix_theme.dart';
@@ -14,6 +15,7 @@ import 'package:PiliPlus/utils/theme_utils.dart';
 import 'package:PiliPlus/common/widgets/floating_navigation_bar.dart';
 import 'package:flutter/services.dart' show FontLoader;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get/get_navigation/src/routes/default_route.dart';
 import 'package:material_ui/material_ui.dart';
 
 const _fontFamily = 'PreviewFont';
@@ -485,6 +487,8 @@ void main() {
       ),
     );
 
+    // 用应用里真实的那条路径：GetX 的 GetPageRoute + 我们补的覆盖驱动。
+    final controller = MiuixCoverController();
     await tester.pumpWidget(
       MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -492,6 +496,9 @@ void main() {
           colors: MiuixColors.light,
           fontFamily: _fontFamily,
         ),
+        navigatorObservers: [MiuixNavigatorObserver(controller)],
+        builder: (context, child) =>
+            MiuixNavigationScope(controller: controller, child: child!),
         home: Builder(
           builder: (context) => Scaffold(
             body: Stack(
@@ -504,8 +511,8 @@ void main() {
                 Center(
                   child: TextButton(
                     onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => Scaffold(
+                      GetPageRoute<void>(
+                        page: () => Scaffold(
                           body: body(
                             MiuixColors.light.surfaceContainer,
                             '视频详情',

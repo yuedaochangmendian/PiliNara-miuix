@@ -25,6 +25,7 @@ import 'package:PiliPlus/utils/font_utils.dart';
 import 'package:PiliPlus/utils/json_file_handler.dart';
 import 'package:PiliPlus/utils/max_screen_size.dart';
 import 'package:PiliPlus/utils/miuix/miuix_colors.dart';
+import 'package:PiliPlus/utils/miuix/miuix_navigation.dart';
 import 'package:PiliPlus/utils/miuix/miuix_scroll_haptic.dart';
 import 'package:PiliPlus/utils/path_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
@@ -54,6 +55,12 @@ import 'package:window_manager/window_manager.dart' hide calcWindowPosition;
 WebViewEnvironment? webViewEnvironment;
 
 EdgeInsets? tmpPadding;
+
+/// 被覆盖页的覆盖效果驱动源：Flutter 只在 `canTransitionTo` / `canTransitionFrom` 都为真时才把
+/// 上一页的 `secondaryAnimation` 接起来，GetX 的 `GetPageRoute` 对自己人返回 false，所以那份
+/// miuix 的视差与压暗由这里补上（见 `lib/utils/miuix/miuix_navigation.dart`）。
+final miuixCoverController = MiuixCoverController();
+final miuixNavigatorObserver = MiuixNavigatorObserver(miuixCoverController);
 
 Future<void> _initDownPath() async {
   if (PlatformUtils.isDesktop) {
@@ -327,6 +334,7 @@ class MyApp extends StatelessWidget {
         routeObserver,
         routeStackObserver,
         FlutterSmartDialog.observer,
+        miuixNavigatorObserver,
       ],
       scrollBehavior: PlatformUtils.isDesktop
           ? const CustomScrollBehavior()
@@ -385,11 +393,15 @@ class MyApp extends StatelessWidget {
         child: child!,
       );
     }
-    // miuix 的滚动边界触感（抛到列表头/尾时震一下）与应用返回探测一起在这里接一次。
-    return MiuixScrollEndHaptic(
-      child: BackDetector(
-        onBack: _onBack,
-        child: child,
+    // miuix 的滚动边界触感（抛到列表头/尾时震一下）与应用返回探测一起在这里接一次；
+    // MiuixNavigationScope 放在 Navigator 之上，页面才拿得到被覆盖页的那份驱动。
+    return MiuixNavigationScope(
+      controller: miuixCoverController,
+      child: MiuixScrollEndHaptic(
+        child: BackDetector(
+          onBack: _onBack,
+          child: child,
+        ),
       ),
     );
   }

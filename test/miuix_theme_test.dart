@@ -6,6 +6,7 @@ import 'package:PiliPlus/utils/miuix/miuix_colors.dart';
 import 'package:PiliPlus/utils/miuix/miuix_drag_handle.dart';
 import 'package:PiliPlus/utils/miuix/miuix_indication.dart';
 import 'package:PiliPlus/utils/miuix/miuix_motion.dart';
+import 'package:PiliPlus/utils/miuix/miuix_navigation.dart';
 import 'package:PiliPlus/utils/miuix/miuix_scroll_haptic.dart';
 import 'package:PiliPlus/utils/miuix/miuix_shapes.dart';
 import 'package:PiliPlus/utils/miuix/miuix_squircle.dart';
@@ -13,6 +14,7 @@ import 'package:PiliPlus/utils/miuix/miuix_text_styles.dart';
 import 'package:PiliPlus/utils/miuix/miuix_theme.dart';
 import 'package:flex_seed_scheme/flex_seed_scheme.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get/get_navigation/src/routes/default_route.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
@@ -337,6 +339,86 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
       expect(find.text('第二页'), findsNothing);
+    });
+
+    /// 被覆盖页的压暗（miuix 的 dimAmount 50%）只由这一处产生，可以用来判断覆盖效果有没有生效。
+    Iterable<double> dimAlphas(WidgetTester tester) => tester
+        .widgetList<ColoredBox>(find.byType(ColoredBox))
+        .map((box) => box.color.a)
+        .where((a) => a > 0 && a <= 0.5);
+
+    testWidgets('GetX → GetX：被覆盖页也会视差与压暗（框架自己不会驱动 GetPageRoute）', (
+      tester,
+    ) async {
+      final controller = MiuixCoverController();
+      final route = GetPageRoute<void>(
+        page: () => const Scaffold(body: Center(child: Text('第二页'))),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
+          navigatorObservers: [MiuixNavigatorObserver(controller)],
+          builder: (context, child) =>
+              MiuixNavigationScope(controller: controller, child: child!),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push(route),
+                  child: const Text('打开'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(dimAlphas(tester), isEmpty);
+      await tester.tap(find.text('打开'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      // 框架不会接 GetX → GetX 的 secondaryAnimation，这份压暗来自我们补的驱动。
+      expect(dimAlphas(tester), isNotEmpty);
+      expect(controller.debugDriverCount, 1);
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsOneWidget);
+      // 弹出后登记要回收，不能一直挂在 controller 上。
+      tester.state<NavigatorState>(find.byType(Navigator)).pop();
+      await tester.pumpAndSettle();
+      expect(controller.debugDriverCount, 0);
+      expect(controller.driverOf(route), isNull);
+    });
+
+    testWidgets('框架自己驱动的（Material → Material）只压暗一次', (tester) async {
+      final controller = MiuixCoverController();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
+          navigatorObservers: [MiuixNavigatorObserver(controller)],
+          builder: (context, child) =>
+              MiuixNavigationScope(controller: controller, child: child!),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const Scaffold(
+                        body: Center(child: Text('第二页')),
+                      ),
+                    ),
+                  ),
+                  child: const Text('打开'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(dimAlphas(tester), hasLength(1));
+      await tester.pumpAndSettle();
     });
 
     test('起手死区与抓取锚点与 miuix 一致', () {

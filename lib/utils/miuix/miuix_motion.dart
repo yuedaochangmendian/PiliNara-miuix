@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart'
 import 'package:flutter/physics.dart' show SpringSimulation, Tolerance;
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart' show PredictiveBackEvent;
+import 'package:PiliPlus/utils/miuix/miuix_navigation.dart';
 import 'package:material_ui/material_ui.dart';
 
 /// miuix 的动效参数。
@@ -572,6 +573,11 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
       rtl ? padding.right : padding.left,
       MiuixMotion.swipeBackEdgeWidth,
     );
+    // 框架只在 canTransitionTo / canTransitionFrom 都为真时才驱动被覆盖页的
+    // secondaryAnimation；GetX → GetX 拿不到，由 MiuixNavigationScope 补一份驱动。
+    final coverDriver = MiuixNavigationScope.maybeOf(
+      context,
+    )?.driverOf(widget.route);
     return Stack(
       fit: StackFit.passthrough,
       children: [
@@ -579,6 +585,7 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
           animation: Listenable.merge([
             widget.animation,
             widget.secondaryAnimation,
+            coverDriver,
           ]),
           child: widget.child,
           builder: (context, child) {
@@ -592,10 +599,11 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
             // miuix 的「视觉是深度的纯函数」：被覆盖的程度同样直接跟着深度走，
             // 所以手势期间仍然不过插值器（`popGestureInProgress` 是整个 navigator 的，
             // 被覆盖的那一页也能读到）。
-            final rawCover = widget.secondaryAnimation.value;
+            final coverAnimation = coverDriver ?? widget.secondaryAnimation;
+            final rawCover = coverAnimation.value;
             final cover = widget.route.popGestureInProgress
                 ? rawCover
-                : _curved(widget.secondaryAnimation, rawCover);
+                : _curved(coverAnimation, rawCover);
             final page = child ?? const SizedBox.shrink();
             return Transform.translate(
               // 被覆盖时向反方向视差 1/4 屏宽（miuix 的 covered 处理）。
