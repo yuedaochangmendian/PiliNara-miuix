@@ -193,6 +193,29 @@ go through GetX, which mirrors the same slide (its `rightToLeftWithFade`).
 The covered page is additionally dimmed by up to 50 % (`NavDisplayEffects.dimAmount`) as the motion
 runs, which is how miuix's effect layer darkens the layer below the entering one.
 
+### Icons
+
+miuix ships its icons as vectors, not as an icon font: one Kotlin `ImageVector` per icon (156 icons,
+five weights, `MiuixIcons.<Name>` is the regular one), with a 1297.2 viewport and a
+`group(scaleY = -1, translationY = viewport)` wrapper. `tool/gen_miuix_icons.dart` reads the Kotlin,
+keeps the regular weight, bakes the flip and the 24 : 1297.2 scale into the coordinates and emits an
+SVG-style command string per icon into `lib/utils/miuix/miuix_icon_data.dart`; `MiuixIcon` parses
+those strings (cached) and paints them, taking its colour from `IconTheme` like `Icon` does. The
+settings pages and shared widgets use the miuix set for the icons that map one-to-one (back, close,
+more, search, refresh, delete, download, share, settings, add, play/pause, clear, filter, sort, copy,
+edit, info, help, lock, update); business pages still use Material icons.
+
+### Continuous corners: path, not shader
+
+miuix's own squircle module is shader-backed, but the "shader" is a **pre-baked SDF bitmap**
+(`AlphaImageBitmap` plus the note in `SquirclePath.kt` that the path control ratio must match the
+value the SDF was baked for) sampled by the runtime-shader APIs, with a plain rounded-rect fallback
+where shaders are unavailable. Reproducing that in Flutter would mean baking the same SDF from the
+same path and sampling it through a `FragmentProgram` — the silhouette would be identical to what
+`MiuixSquircleBorder` already draws, the only gain being cheaper clipping while the corners animate,
+at the cost of a shader asset in the build and Impeller/Skia differences. That trade is not worth it
+here, so the path implementation stays as the production one.
+
 ### Bottom navigation bar
 
 The theme sets the bar's fill to `surfaceContainer` (MIUI's floating bar; the page is `surface`) and

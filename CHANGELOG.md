@@ -5,6 +5,17 @@
 ## [Unreleased]
 之后规划的功能和修复会记录在这里,等到正式发布后再移到下面对应的版本里（画饼.
 
+### Added
+- **miuix 图标集**：miuix 的图标是矢量（156 个、五档字重），按默认的 Regular 那档转成 Flutter 的路径数据（生成器 `tool/gen_miuix_icons.dart`，Y 轴翻转与 24×24 缩放都在生成时烘进去），新增自绘组件 `MiuixIcon`（取色跟随 `IconTheme`）；设置页与共享组件里语义一一对应的那批已换成 miuix 图标（返回/关闭/更多/搜索/刷新/删除/下载/分享/设置/加号/播放暂停/清除/筛选/排序/复制/编辑/信息/帮助/锁/更新），业务页面暂不动。
+- **滚动边界触感**：`MiuixScrollEndHaptic` 按 miuix 的 `scrollEndHaptic`——抛掷到列表头/尾、边界把速度吃掉时震一下（可用速度 > 1、同一边界只震一次、往回滚超过 1 复位），触感用 `HapticFeedback.selectionClick()`；判据是纯函数（有单测），在应用 builder 处接一次即全应用生效。
+- **字体回落 MiSans**：不打包字体，而是把 MiSans 放进 TextTheme 的 `fontFamilyFallback`——MIUI 设备系统自带会直接命中，其它设备回落系统字体，应用自选的字体仍然优先。
+
+### Changed
+- **顶栏按 miuix 规格**：收起高度 52（原来用了 Material 的 `kToolbarHeight` 56，收起高度、`toolbarHeight`、折叠比例都偏），`MiuixShapes` 补齐标题 26 / 图标 16 / 大标题下边距 4 / 副标题下边距 8 / 小顶栏中心 50。
+- **复选框/单选框改成 MIUI 的圆形**（miuix 用 `CircleShape`）：填充按状态取（选中 `primary`、未选中 `secondary`、禁用 `disabled*`），对勾 `onPrimary`，去掉 Material 描边；标签行取 miuix 配色（指示条 `primary`、分隔线 `dividerLine`）。
+- **纯黑模式保留 miuix 的表面层次**：miuix 的抬升靠调色板层次（深色下 `surface` 纯黑 → `surfaceContainer` `#242424` → `surfaceContainerHighest` `#2D2D2D`），不再把容器按比例额外压暗。
+- **手势落位的参数与判据**：`MiuixMotion` 补上 miuix-nav 的判据（速度绝对值 ≥ 1 屏/秒由速度决定、死区内过一半即提交）与落位弹簧（damping 1 / stiffness 146）。
+
 ### Changed
 - **主题改为 miuix**：应用的配色、圆角与字阶全部换成 miuix（MIUI / HyperOS）的设计令牌。默认主题是 miuix 的固定配色（MIUI 蓝，`#3482FF`），主题色列表末尾新增「MIUI 蓝」一项；自定义主题色与调色板风格照旧可用，只是先算出 Material 配色、再按 miuix 的角色规则翻译（相当于 miuix 的 Monet 模式）。「动态取色」默认改为关闭，与 miuix 自身的默认主题一致，可在设置里开启。实现与映射表见 `docs/miuix_theme.md`。
 - **应用 miuix 的界面特性**：连续圆角（squircle，角块 = 半径 × 1.1、贝塞尔控制点 0.643）用到卡片、对话框、弹层、弹出菜单、按钮与导航项；按压反馈由 Material 水波纹换成 miuix 的整块淡入（10%，进入 200ms / 退出 350ms）；输入框改为 MIUI 的填充样式（`secondaryContainer` 底色、16 连续圆角，聚焦/报错才描边）；底部弹层补上 miuix 的拖拽手柄（24dp 抓取区 + 45×4dp 胶囊，按下加长到 55dp、加深到 35%）。滚动回弹本来就是拉伸式，与 miuix 一致，未作改动。
