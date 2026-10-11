@@ -46,8 +46,17 @@ abstract final class MiuixMotion {
   /// miuix 落位弹簧的刚度（`NavDriverSpec.STIFFNESS`，深度轴单位 = 条目数）。
   static const double settleStiffness = 146;
 
-  /// 返回（pop）落位弹簧的刚度：临界阻尼的形状不变，只把刚度收紧，让页面更快走完。
-  static const double returnStiffness = 260;
+  /// 手势落位（返回提交、回弹取消都算）实际使用的刚度。
+  ///
+  /// miuix 原始的 [settleStiffness]（146）偏慢，这里统一收紧到 260 —— 临界阻尼的形状不变
+  /// （不回弹），只是更快把页面送走 / 缩回来。
+  static const double gestureStiffness = 260;
+
+  /// 页面「视觉上已经出画」的阈值。
+  ///
+  /// 这里的值是「进场进度」（`1` = 完全在屏内、`0` = 完全出画）：低于 2% 就只剩十几像素露在外面，
+  /// 可以收尾了。
+  static const double offscreenEnter = 0.02;
 
   /// miuix 弹簧的可见阈值（`NavDriverSpec.VISIBILITY_THRESHOLD`）：离目标不到 0.25% 就算收敛。
   static const double settleVisibilityThreshold = 0.0025;
@@ -67,11 +76,13 @@ abstract final class MiuixMotion {
   /// miuix 导航的过场曲线（烘焙好的弹簧阶跃响应，response = 0.8、damping = 0.95）。
   static const Curve programmatic = _MiuixProgrammaticCurve();
 
-  /// 返回（pop）用的曲线：同一条烘焙公式，但 response 从 0.8 收到 0.5。
+  /// 返回（pop）用的曲线。
   ///
-  /// 这样它在四成的时间里就滑出屏幕 97%（原来要七成），剩下的尾巴在屏幕外看不见 ——
-  /// 等于把「返回」整体加快。这是本项目对 miuix 参数的调整（miuix 进出共用
-  /// `NavProgrammaticEasing`）。
+  /// 返回时路由的动画值是 1 → 0，`enter = returning(value)` 就是页面还在屏内的比例，
+  /// 所以这条曲线在**这个方向**上表现为「一出发就走掉大半」：10% 时间滑出 41%、
+  /// 30% 出 83%、60% 出 99%。miuix 进出共用 `NavProgrammaticEasing`（同刻度分别是
+  /// 5% / 48% / 84%），这里按需求单独换一条更快的、尾巴极短的 —— 配合 [_endPopIfOffscreen]：
+  /// 页面一出画就收尾，不用等满整段时长。
   static const Curve returning = _MiuixReturnCurve();
 
   /// miuix 的 `DecelerateEasing`：1 − (1 − t)²。
@@ -107,10 +118,10 @@ abstract final class MiuixMotion {
     damping: 2 * 12.0830459736, // 2 * sqrt(146) ≈ 临界阻尼
   );
 
-  /// 返回（pop）落位的弹簧：同样临界阻尼、不回弹，刚度收紧到 [returnStiffness]。
-  static SpringDescription get returnSpring => const SpringDescription(
+  /// 手势落位实际用的弹簧：同样临界阻尼、不回弹，刚度 [gestureStiffness]。
+  static SpringDescription get gestureSpring => const SpringDescription(
     mass: 1,
-    stiffness: returnStiffness,
+    stiffness: gestureStiffness,
     damping: 2 * 16.1245154966, // 2 * sqrt(260) ≈ 临界阻尼
   );
 
@@ -200,27 +211,15 @@ class _MiuixProgrammaticCurve extends Curve {
   }
 }
 
-/// 返回（pop）曲线：与 [_MiuixProgrammaticCurve] 同一条公式，只把 response 收到 0.5。
+/// 返回（pop）曲线：纯五次方 `t⁵`（本项目定的，miuix 里没有对应参数）。
 ///
-/// response 越小弹簧越快：四成时间就走到 97%，剩下的尾巴在屏幕外，所以「返回」看起来更快，
-/// 但仍是同一条烘焙弹簧的形状（单调、不回弹）。
+/// 为什么是这个方向：返回时路由的值从 1 掉到 0，`enter = curve(value)` 是页面还在屏内的比例，
+/// 所以 `t⁵` 在这个方向上表现为「一出发就走掉大半、尾巴极短」。
 class _MiuixReturnCurve extends Curve {
   const _MiuixReturnCurve();
 
-  static const double _response = 0.5;
-  static const double _damping = 0.95;
-
   @override
-  double transformInternal(double t) {
-    const omega = 2 * math.pi / _response;
-    const k = omega * omega;
-    const c = _damping * 4 * math.pi / _response;
-    final w = math.sqrt(4 * k - c * c) / 2;
-    const r = -c / 2;
-    final c2 = r / w;
-    final decay = math.exp(r * t);
-    return decay * (-math.cos(w * t) + c2 * math.sin(w * t)) + 1;
-  }
+  double transformInternal(double t) => t * t * t * t * t;
 }
 
 /// miuix 的 `DecelerateEasing`（factor = 1）。
@@ -384,6 +383,7 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
       ..onUpdate = _handleDragUpdate
       ..onEnd = _handleDragEnd
       ..onCancel = _handleDragCancel;
+    widget.animation.addListener(_endPopIfOffscreen);
     WidgetsBinding.instance.addObserver(this);
   }
 
@@ -396,10 +396,14 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.animation.removeListener(_endPopIfOffscreen);
     _recognizer.dispose();
     _ticker?.dispose();
     // 手势（含落位）没走完就被销毁：把「手驱动」信号交还，别让被覆盖页一直按 1:1 渲染。
     _coverController?.gestureDriven = false;
+    // 这一页可能在动画播完前就被 finalize（页面出画即收尾）：把它作为「上一层动画」的
+    // 覆盖登记交还，否则被覆盖页会留下一点点压暗与视差。
+    _coverController?.releaseDriver(widget.animation);
     if (_gestureStarted) {
       _gestureStarted = false;
       // 手势没走完就被销毁（路由被别处 pop、页面被移除）：延迟一拍清掉 navigator 的手势标记。
@@ -511,6 +515,26 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
               ))
           .clamp(0.0, 1.0);
 
+  /// 程序化返回（返回键 / `Get.back()`）的收尾。
+  ///
+  /// 框架要等**整段** `reverseTransitionDuration` 走完才 finalize 这一页（GetX 把它写死成 300ms），
+  /// 在此之前这一页还占着 overlay、下面那一页的压暗与视差也还挂着 —— 于是「页面看起来早走了，
+  /// 屏幕却还是灰的、还偏着，点到偏出去的地方没反应」。我们的返回曲线三成时间就滑出 83%
+  /// （[MiuixMotion.returning]），所以视觉出画后立刻收尾：`finalizeRoute` 把这一页从 overlay
+  /// 上摘掉，底下那一页立刻归位、取消压暗，点击也回到正常位置。
+  void _endPopIfOffscreen() {
+    final animation = widget.animation;
+    if (animation.status != AnimationStatus.reverse) {
+      return;
+    }
+    if (_curved(animation, animation.value) > MiuixMotion.offscreenEnter) {
+      return;
+    }
+    // 页面已经出画：直接让框架 finalize 这一页（它原本要等动画跑满整段时长才收）。
+    // `finalizeRoute` 对 page-based 路由允许在 pop 之前的任何阶段调用。
+    widget.route.navigator?.finalizeRoute(widget.route);
+  }
+
   void _handleDragEnd(DragEndDetails details) {
     if (!_claimed) {
       return;
@@ -617,20 +641,17 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     final to = commit ? 0.0 : 1.0;
     // value = 1 - progress，所以朝 pop 的进度速度在值轴上是负的（miuix 把进度速度取负交给深度轴）。
     // commit 时按 `commitVelocityFloor` 夹住过冲；cancel 的目标在上方，临界阻尼不会越过它。
-    // commit（返回）用更硬的弹簧：形状不变（临界阻尼），但更快把页面送走。
-    final stiffness = commit
-        ? MiuixMotion.returnStiffness
-        : MiuixMotion.settleStiffness;
+    // 两个方向都用收紧后的弹簧（[MiuixMotion.gestureSpring]）：返回更快送走、回弹更快缩回。
     final seed = MiuixMotion.settleSeedVelocity(
       towardTargetVelocity: -progressVelocity,
       distance: (to - from).abs(),
       clampOvershoot: commit,
-      stiffness: stiffness,
+      stiffness: MiuixMotion.gestureStiffness,
     );
     _springTarget = to;
     _commitPending = commit;
     _spring = SpringSimulation(
-      commit ? MiuixMotion.returnSpring : MiuixMotion.settleSpring,
+      MiuixMotion.gestureSpring,
       from,
       to,
       seed,

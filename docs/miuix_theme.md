@@ -201,15 +201,18 @@ it scrolls. It is a transparent route plus a `ClipPath`, with the curve and dura
   (`NavProgrammaticEasing`): the step response of an underdamped spring (response 0.8, damping 0.95)
   solved point by point — a brisk middle and a long tail, played over
   `MiuixMotion.programmaticDuration` (500 ms, `NavDriverSpec.PROGRAMMATIC_DURATION_MILLIS`).
-* `MiuixMotion.returning` is the same baked formula with the response tightened to 0.5, used for the
-  pop direction only, together with `returnDuration` (240 ms) and a stiffer settle spring
-  (`returnStiffness` 260, still critically damped) for gesture commits. This is a deliberate
-  PiliNara-side deviation from miuix, which plays one 500 ms curve in both directions: a return
-  already knows where it is going, and half a second of waiting feels sluggish. The tightened curve
-  is out of the way after ~40 % of the interval (97 % of the screen) instead of ~70 %, so the
-  remaining tail happens off-screen. GetX hard-codes its route duration at 300 ms
-  (`GetPageRouteTransitionMixin.transitionDuration`), so `returnDuration` only reaches routes built
-  through `MaterialRouteTransitionMixin` — the faster curve applies everywhere.
+* `MiuixMotion.returning` is the return-only curve, and it is a plain quintic (`t⁵`) rather than a
+  baked spring. The route's animation value runs 1 → 0 while a page pops, so `returning(value)` is
+  the fraction of the page still on screen, and the quintic reads as "most of the way out almost
+  immediately": 41 % of the screen after 10 % of the interval, 83 % after 30 %, 99 % after 60 %
+  (miuix's own curve, played the same way, gives 5 % / 48 % / 84 %). Note the direction matters: an
+  earlier attempt reused a fast-*rising* spring here, which in this descending domain left the page
+  parked almost in place until the very end. This is a deliberate PiliNara-side deviation from miuix
+  (which plays one 500 ms curve both ways): a return already knows where it is going. It is paired
+  with `returnDuration` (240 ms; GetX hard-codes its own routes at 300 ms, so this only reaches
+  routes built through `MaterialRouteTransitionMixin` — the curve applies everywhere), with
+  `gestureSpring` (stiffness 260, still critically damped) for both gesture settles, and with the
+  early finalize described below.
 * `decelerate` / `accelerate` / `sinOut` are miuix's `DecelerateEasing`, `AccelerateEasing` and
   `SinOutEasing`.
 * `spring(damping, response)` is `folmeSpring`: stiffness `(2π / response)²`, damping ratio as given.
@@ -259,11 +262,24 @@ three phases follow `NavSwipeArbitrator` / `snapToFinger` / `navBackCommitDecisi
   steals nor cancels; a gesture only ends when the finger lifts.
 * **Settle.** The release is classified by `navBackCommitDecision` — velocity first (≥ 1 progress
   unit/s decides by sign), position as the fallback (≥ 0.5 commits) — and the release velocity is
-  handed to the shared spring (`NavDriverSpec.STIFFNESS` 146, `DAMPING_RATIO` 1) as its initial
-  velocity, so position *and* velocity stay continuous. A commit floors that seed at
+  handed to the settle spring as its initial velocity, so position *and* velocity stay continuous.
+  Both directions use `MiuixMotion.gestureSpring` (stiffness 260 instead of miuix's 146,
+  `DAMPING_RATIO` 1), which keeps the critically damped shape and only makes the hand-off quicker.
+  A commit floors that seed at
   `-sqrt(stiffness) * distance` (`commitVelocityFloor`), which is the exact no-overshoot bound of a
   critically damped spring, so a flung release cannot bounce past the popped position. The
   visibility threshold is miuix's `VISIBILITY_THRESHOLD` (0.0025).
+
+Once a page is visually out of frame, the transition does not wait for the rest of the route's
+duration: `MiuixPageTransition` watches its own animation during a pop and calls
+`NavigatorState.finalizeRoute` as soon as `returning(value)` (the on-screen fraction) drops to 2 %.
+That matters because the covered page keeps its dim and quarter-width parallax until the popped
+route is finalized, and the framework only finalizes it after *the whole* reverse duration — which
+GetX hard-codes at 300 ms. Finalizing on the visual end instead means the page below snaps back,
+loses its dim, and becomes tappable where it is actually drawn, right when the return looks done.
+The popped route hands its cover binding back on the way out (`MiuixCoverController.releaseDriver`),
+and controller notifications made while the widget tree is locked (a `dispose`, for instance) are
+deferred to the end of the frame.
 
 Input blocking follows miuix as well: miuix consumes both axes and blocks taps and scrolls *until the
 release*, so the navigator's user-gesture flag is cleared the moment the finger lifts (or the

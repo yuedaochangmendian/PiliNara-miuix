@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding, SchedulerPhase;
 
 /// miuix-nav 的「被覆盖页」需要一个驱动源。
 ///
@@ -34,7 +35,18 @@ class MiuixCoverController extends ChangeNotifier {
       return;
     }
     _gestureDriven = value;
-    notifyListeners();
+    _notify();
+  }
+
+  /// 通知依赖方重建。构建/布局阶段（尤其是 `dispose` 触发的回收）不能同步标记重建，
+  /// 否则会撞上「widget tree was locked」，这里推到帧尾。
+  void _notify() {
+    final binding = SchedulerBinding.instance;
+    if (binding.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      binding.addPostFrameCallback((_) => notifyListeners());
+    } else {
+      notifyListeners();
+    }
   }
 
   void _drive(Route<dynamic> route, Animation<double> driver) {
@@ -46,14 +58,28 @@ class MiuixCoverController extends ChangeNotifier {
     // 不然会一直挂在 controller 上。
     _release(route);
     _bindings[route] = _CoverBinding(driver, () => _release(route));
-    notifyListeners();
+    _notify();
   }
 
   void _release(Route<dynamic> route) {
     final binding = _bindings.remove(route);
     if (binding != null) {
       binding.dispose();
-      notifyListeners();
+      _notify();
+    }
+  }
+
+  /// 丢掉以 [driver] 为驱动的那条登记。
+  ///
+  /// 路由可能在动画播完之前就被 finalize（例如我们在页面出画时就提前收尾，
+  /// 见 `MiuixPageTransition._endPopIfOffscreen`），那时它的动画不会再走到
+  /// `dismissed`，登记要由这一页自己交还，否则被覆盖页会留一点点压暗与视差。
+  void releaseDriver(Animation<double> driver) {
+    for (final entry in _bindings.entries.toList(growable: false)) {
+      if (identical(entry.value.driver, driver)) {
+        _release(entry.key);
+        return;
+      }
     }
   }
 }

@@ -640,7 +640,7 @@ void main() {
       expect(navigator.userGestureInProgress, isFalse);
 
       // 清掉之后页面还能点。
-      navigator.pop();
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
       await tester.pumpAndSettle();
       await tester.tap(find.text('打开'));
       await tester.pumpAndSettle();
@@ -868,29 +868,24 @@ void main() {
       }
     });
 
-    test('返回比进场快：时长更短、曲线更早走完、落位弹簧更硬', () {
+    test('返回曲线：一出发就走掉大半，比 miuix 那条快', () {
+      const back = MiuixMotion.returning;
+      // 返回时路由的值是 1 → 0，`back(value)` 就是「还在屏内的比例」。
+      expect(1 - back.transform(0.9), closeTo(0.41, 0.03));
+      expect(1 - back.transform(0.7), closeTo(0.83, 0.03));
+      expect(1 - back.transform(0.4), closeTo(0.99, 0.02));
+      final miuixExit = MiuixMotion.programmatic.flipped;
+      expect(back.transform(0.7), lessThan(miuixExit.transform(0.7)));
+    });
+
+    test('返回比进场快：时长更短、落位弹簧更硬', () {
       expect(
         MiuixMotion.returnDuration,
         lessThan(MiuixMotion.programmaticDuration),
       );
-      const enter = MiuixMotion.programmatic;
-      const back = MiuixMotion.returning;
-      expect(back.transform(0), closeTo(0, 0.0001));
-      expect(back.transform(1), closeTo(1, 0.001));
-      // 同一条烘焙弹簧的形状：主体单调不回弹（尾巴上阻尼 0.95 带来的过冲在 0.1% 以内）。
-      var previous = -1.0;
-      for (var i = 0; i <= 16; i++) {
-        final value = back.transform(i / 20);
-        expect(value, greaterThanOrEqualTo(previous));
-        previous = value;
-      }
-      expect(back.transform(1), closeTo(1, 0.001));
-      // 四成时间就滑出去 97%（进场同一时刻只有 84%），尾巴落在屏幕外。
-      expect(back.transform(0.4), greaterThan(0.95));
-      expect(back.transform(0.4), greaterThan(enter.transform(0.4)));
-      // 返回落位用更硬的临界阻尼弹簧。
+      // 落位弹簧更硬（临界阻尼不变）。
       expect(
-        MiuixMotion.returnSpring.stiffness,
+        MiuixMotion.gestureSpring.stiffness,
         greaterThan(MiuixMotion.settleSpring.stiffness),
       );
       // 过冲的夹取跟着这根弹簧走。
@@ -898,19 +893,64 @@ void main() {
         MiuixMotion.settleSeedVelocity(
           towardTargetVelocity: -20,
           distance: 0.5,
-          stiffness: MiuixMotion.returnStiffness,
+          stiffness: MiuixMotion.gestureStiffness,
         ),
-        closeTo(-math.sqrt(MiuixMotion.returnStiffness) * 0.5, 1e-9),
+        closeTo(-math.sqrt(MiuixMotion.gestureStiffness) * 0.5, 1e-9),
       );
       // 不过冲的界限仍成立：更慢的松手原样保留速度。
       expect(
         MiuixMotion.settleSeedVelocity(
           towardTargetVelocity: -2,
           distance: 0.5,
-          stiffness: MiuixMotion.returnStiffness,
+          stiffness: MiuixMotion.gestureStiffness,
         ),
         -2,
       );
+    });
+
+    testWidgets('返回时页面出画就收尾：不等满整段时长，下面那页立刻归位可点', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const Scaffold(
+                        body: Center(child: Text('第二页')),
+                      ),
+                    ),
+                  ),
+                  child: const Text('打开'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      // 返回（用第二页自己的 context 弹，等价于点返回键）。
+      Navigator.of(tester.element(find.text('第二页'))).pop();
+      // 返回动画整段 240ms，但页面在 ~55% 就出画了，这一页应当已经被摘掉。
+      // （动画从 pop 后的第一帧才开始计时，所以逐帧推进。）
+      for (var i = 0; i < 11; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await tester.pump();
+      expect(find.text('第二页'), findsNothing);
+      // 下面那页立刻归位且能点。
+      expect(
+        tester
+            .widgetList<ColoredBox>(find.byType(ColoredBox))
+            .where((box) => box.color.a > 0.001 && box.color.a <= 0.5),
+        isEmpty,
+      );
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsOneWidget);
     });
 
     test('三条缓动与 miuix 的 anim 模块一致', () {
