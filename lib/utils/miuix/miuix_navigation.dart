@@ -15,11 +15,27 @@ class MiuixCoverController extends ChangeNotifier {
   final Map<Route<dynamic>, _CoverBinding> _bindings =
       <Route<dynamic>, _CoverBinding>{};
 
+  bool _gestureDriven = false;
+
   /// [route] 的覆盖驱动；null 表示按框架自己的 `secondaryAnimation` 走。
   Animation<double>? driverOf(Route<dynamic> route) => _bindings[route]?.driver;
 
   /// 当前登记着的驱动数量（测试用来确认登记与回收）。
   int get debugDriverCount => _bindings.length;
+
+  /// 是否有页面正被手势（含抬手后的落位弹簧）**直接**驱动。
+  ///
+  /// 这段时间页面位置与覆盖程度都不过插值器（miuix 的「视觉是深度的纯函数」）。抬手之后
+  /// navigator 的手势标记已经清掉了（清掉才能让页面恢复可点击），所以渲染要单独看这个信号。
+  bool get gestureDriven => _gestureDriven;
+
+  set gestureDriven(bool value) {
+    if (_gestureDriven == value) {
+      return;
+    }
+    _gestureDriven = value;
+    notifyListeners();
+  }
 
   void _drive(Route<dynamic> route, Animation<double> driver) {
     final existing = _bindings[route];
@@ -132,7 +148,11 @@ class MiuixNavigatorObserver extends NavigatorObserver {
       final animation = above is TransitionRoute<dynamic>
           ? above.animation
           : null;
-      if (animation == null || _frameworkDrives(below, above!)) {
+      // 只有「整屏页面」之间才有 miuix 那套被覆盖页的几何。对话框、底部弹层这类 popup 路由
+      // 框架本来就不会驱动被覆盖页（它们有自己的遮罩），我们也不能给它们补上 1/4 屏宽视差 ——
+      // 否则弹出一个菜单，底下的页面会整块往左偏移并压暗。
+      final pageLike = below is PageRoute<dynamic> && above is PageRoute<dynamic>;
+      if (!pageLike || animation == null || _frameworkDrives(below, above)) {
         controller._release(below);
       } else {
         controller._drive(below, animation);

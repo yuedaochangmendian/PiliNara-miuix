@@ -256,6 +256,15 @@ three phases follow `NavSwipeArbitrator` / `snapToFinger` / `navBackCommitDecisi
   critically damped spring, so a flung release cannot bounce past the popped position. The
   visibility threshold is miuix's `VISIBILITY_THRESHOLD` (0.0025).
 
+Input blocking follows miuix as well: miuix consumes both axes and blocks taps and scrolls *until the
+release*, so the navigator's user-gesture flag is cleared the moment the finger lifts (or the
+platform's predictive-back terminal signal arrives) and the settle spring keeps running on its own.
+That flag matters because `_ModalScopeState` wraps every route in
+`IgnorePointer(ignoring: route.animation.status == reverse || navigator.userGestureInProgress)` —
+holding it through the settle leaves the whole app unclickable until the animation ends. The
+layer's own "hand-driven" flag (`MiuixCoverController.gestureDriven`) is what keeps the page and the
+covered page at 1 : 1 through the settle instead.
+
 Predictive back is implemented in the same widget: the builder is the `WidgetsBindingObserver` that
 claims `handleStartBackGesture`, so Android U+ system edge gestures drive the page 1:1 through
 `handleStartBackGesture` / `handleUpdateBackGestureProgress`, and the platform's terminal signal

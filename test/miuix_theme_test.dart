@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:PiliPlus/models/common/theme/theme_color_type.dart';
+import 'package:PiliPlus/pages/common/publish/publish_route.dart';
 import 'package:PiliPlus/utils/extension/theme_ext.dart';
 import 'package:PiliPlus/utils/miuix/miuix_colors.dart';
 import 'package:PiliPlus/utils/miuix/miuix_drag_handle.dart';
@@ -13,6 +14,8 @@ import 'package:PiliPlus/utils/miuix/miuix_squircle.dart';
 import 'package:PiliPlus/utils/miuix/miuix_text_styles.dart';
 import 'package:PiliPlus/utils/miuix/miuix_theme.dart';
 import 'package:flex_seed_scheme/flex_seed_scheme.dart';
+import 'package:flutter/services.dart'
+    show MethodCall, StandardMethodCodec, SystemChannels;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get_navigation/src/routes/default_route.dart';
 import 'package:material_ui/material_ui.dart';
@@ -347,6 +350,12 @@ void main() {
         .map((box) => box.color.a)
         .where((a) => a > 0 && a <= 0.5);
 
+    /// 整屏滑入与「被覆盖页视差」都是横向平移，这里只看横向位移。
+    Iterable<double> pageSlideOffsets(WidgetTester tester) => tester
+        .widgetList<Transform>(find.byType(Transform))
+        .map((t) => t.transform.getTranslation().x)
+        .where((dx) => dx.abs() > 0.5);
+
     testWidgets('GetX → GetX：被覆盖页也会视差与压暗（框架自己不会驱动 GetPageRoute）', (
       tester,
     ) async {
@@ -419,6 +428,158 @@ void main() {
       await tester.pump(const Duration(milliseconds: 150));
       expect(dimAlphas(tester), hasLength(1));
       await tester.pumpAndSettle();
+    });
+
+    testWidgets('弹层类路由不参与页面级视差（弹出卡片不会把底下的页面顶偏）', (tester) async {
+      final controller = MiuixCoverController();
+      final cases = <String, void Function(BuildContext)>{
+        'dialog': (context) => showDialog<void>(
+          context: context,
+          builder: (_) => const AlertDialog(title: Text('弹层')),
+        ),
+        'sheet': (context) => showModalBottomSheet<void>(
+          context: context,
+          builder: (_) => const SizedBox(height: 200),
+        ),
+        // 首页卡片长按走的就是这条：Get.key.currentState!.push(PublishRoute(...))。
+        'publish': (context) => Navigator.of(context).push(
+          PublishRoute<void>(
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                const Center(child: SizedBox(width: 200, height: 200)),
+          ),
+        ),
+      };
+      for (final entry in cases.entries) {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
+            navigatorObservers: [MiuixNavigatorObserver(controller)],
+            builder: (context, child) =>
+                MiuixNavigationScope(controller: controller, child: child!),
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: Center(
+                  child: TextButton(
+                    onPressed: () => entry.value(context),
+                    child: const Text('打开'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('打开'));
+        await tester.pumpAndSettle();
+        // 页面既不能被压暗，也不能被推偏；驱动登记也不该出现。
+        expect(dimAlphas(tester), isEmpty, reason: entry.key);
+        expect(pageSlideOffsets(tester), isEmpty, reason: entry.key);
+        expect(controller.debugDriverCount, 0, reason: entry.key);
+        // 点遮罩关掉弹层，进入下一轮。
+        await tester.tapAt(const Offset(10, 10));
+        await tester.pumpAndSettle();
+      }
+    });
+
+    testWidgets('返回手势抬手后立刻解除输入屏蔽（落位动画还在跑）', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const Scaffold(
+                        body: Center(child: Text('第二页')),
+                      ),
+                    ),
+                  ),
+                  child: const Text('打开'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      final navigator = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      expect(navigator.userGestureInProgress, isFalse);
+
+      // 手势进行中：miuix 要求屏蔽页面内的点击与滚动。
+      final gesture = await tester.startGesture(const Offset(2, 300));
+      for (var i = 0; i < 5; i++) {
+        await gesture.moveBy(const Offset(20, 0));
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+      expect(navigator.userGestureInProgress, isTrue);
+
+      // 抬手之后手势就不再拥有指针：落位弹簧还在跑，但不能再屏蔽点击。
+      await gesture.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(navigator.userGestureInProgress, isFalse);
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsOneWidget);
+    });
+
+    testWidgets('预测返回：平台的终局信号一到就解除输入屏蔽', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: MiuixTheme.getThemeData(colors: MiuixColors.light),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const Scaffold(
+                        body: Center(child: Text('第二页')),
+                      ),
+                    ),
+                  ),
+                  child: const Text('打开'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      final navigator = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+
+      // 用平台通道模拟系统级预测返回（Android U+ 的边滑）。
+      Future<void> send(String method, {double progress = 0.35}) =>
+          tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+            SystemChannels.backGesture.name,
+            const StandardMethodCodec().encodeMethodCall(
+              MethodCall(method, <String, dynamic>{
+                'touchOffset': const <double>[100, 300],
+                'progress': progress,
+                'swipeEdge': 0,
+              }),
+            ),
+            (_) {},
+          );
+
+      await send('startBackGesture');
+      await tester.pump();
+      expect(navigator.userGestureInProgress, isTrue);
+      await send('updateBackGestureProgress', progress: 0.4);
+      await tester.pump();
+
+      // 用户反悔：平台给 cancel，屏蔽要立刻解除，弹簧自己落回。
+      await send('cancelBackGesture');
+      await tester.pump();
+      expect(navigator.userGestureInProgress, isFalse);
+      await tester.pumpAndSettle();
+      expect(find.text('第二页'), findsOneWidget);
     });
 
     test('起手死区与抓取锚点与 miuix 一致', () {

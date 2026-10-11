@@ -310,6 +310,9 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
       widget.route.popGestureEnabled &&
       _spring == null;
 
+  /// 由 `MiuixNavigationScope` 提供的覆盖效果控制器（没接就是 null）。
+  MiuixCoverController? _coverController;
+
   /// 关闭方向在屏幕上的符号：LTR 是向右，RTL 是向左。
   ///
   /// miuix 的 `NavSwipeDirection` 取物理屏幕方向、不随布局镜像，这里只做方向投影。
@@ -330,10 +333,18 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _coverController = MiuixNavigationScope.maybeOf(context);
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _recognizer.dispose();
     _ticker?.dispose();
+    // 手势（含落位）没走完就被销毁：把「手驱动」信号交还，别让被覆盖页一直按 1:1 渲染。
+    _coverController?.gestureDriven = false;
     if (_gestureStarted) {
       _gestureStarted = false;
       // 手势没走完就被销毁（路由被别处 pop、页面被移除）：延迟一拍清掉 navigator 的手势标记。
@@ -393,6 +404,7 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     widget.route.handleStartBackGesture(progress: _anchorValue);
     _gestureStarted = true;
     _userDriven = true;
+    _coverController?.gestureDriven = true;
     _snapToFinger();
   }
 
@@ -420,6 +432,7 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     _claimed = false;
     // miuix 的速度单位是「每秒多少屏」，方向朝 pop 为正。
     final velocity = _sign * details.velocity.pixelsPerSecond.dx / widget.width;
+    _endUserGesture();
     _settle(
       commit: MiuixMotion.shouldCommitGesture(
         velocity: velocity,
@@ -434,7 +447,22 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
       return;
     }
     _claimed = false;
+    _endUserGesture();
     _settle(commit: false, progressVelocity: 0);
+  }
+
+  /// miuix 只在**手势进行中**屏蔽页面内的点击与滚动（「在释放前，页面内的点击/滚动都被屏蔽」），
+  /// 抬手那一刻手势就不再拥有指针了。所以这里在释放时就清掉 navigator 的手势标记，
+  /// 落位弹簧继续自己跑（渲染靠 [_userDriven] 保持 1:1 跟手）。
+  ///
+  /// 不清的话 `_ModalScopeState` 会把整条路由包进
+  /// `IgnorePointer(ignoring: route.animation.status == reverse || navigator.userGestureInProgress)`，
+  /// 于是一直到落位动画播完，**所有页面**都点不动（这正是「返回动画没播完点不动」的原因）。
+  void _endUserGesture() {
+    if (_gestureStarted) {
+      _gestureStarted = false;
+      widget.route.navigator?.didStopUserGesture();
+    }
   }
 
   // --- 系统级的预测性返回（Android U+）：平台的手势事件落到这里 ---
@@ -453,6 +481,7 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     widget.route.handleStartBackGesture(progress: _anchorValue);
     _gestureStarted = true;
     _userDriven = true;
+    _coverController?.gestureDriven = true;
     _handlePredictiveBackEvent(backEvent);
     return true;
   }
@@ -477,6 +506,7 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     if (!_gestureStarted || _spring != null) {
       return;
     }
+    _endUserGesture();
     // 平台已经判定不返回：交给同一根弹簧落回。
     _settle(commit: false, progressVelocity: 0);
   }
@@ -486,6 +516,7 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     if (!_gestureStarted || _spring != null) {
       return;
     }
+    _endUserGesture();
     // 平台的完成信号本身就是一次 commit 判定（miuix 的 `navBackCompletionDecision`，速度取 0 即接受）。
     _settle(
       commit: MiuixMotion.shouldAcceptPredictiveBackCompletion(),
@@ -543,14 +574,12 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     _springTarget = null;
     _commitPending = false;
     _userDriven = false;
+    _coverController?.gestureDriven = false;
     widget.route.handleUpdateBackGestureProgress(progress: target);
-    if (_gestureStarted) {
-      _gestureStarted = false;
-      // 先走框架自己的 pop（位置已经落到 0，这一步只是记账），再清手势标记，顺序与框架一致。
-      if (commit) {
-        widget.route.navigator?.pop();
-      }
-      widget.route.navigator?.didStopUserGesture();
+    // 手势标记在抬手（或平台的终局信号）时就已经清掉了；这里只做框架自己的 pop：
+    // 位置已经落到 0，这一步只是记账。
+    if (commit) {
+      widget.route.navigator?.pop();
     }
   }
 
@@ -575,9 +604,7 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
     );
     // 框架只在 canTransitionTo / canTransitionFrom 都为真时才驱动被覆盖页的
     // secondaryAnimation；GetX → GetX 拿不到，由 MiuixNavigationScope 补一份驱动。
-    final coverDriver = MiuixNavigationScope.maybeOf(
-      context,
-    )?.driverOf(widget.route);
+    final coverDriver = _coverController?.driverOf(widget.route);
     return Stack(
       fit: StackFit.passthrough,
       children: [
@@ -592,7 +619,9 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
             final raw = widget.animation.value;
             // 手势（含落位弹簧）期间 1:1 跟手，不过插值器（miuix 的 snap 模式）。
             final gestureDriven =
-                _userDriven || widget.route.popGestureInProgress;
+                _userDriven ||
+                widget.route.popGestureInProgress ||
+                (_coverController?.gestureDriven ?? false);
             final enter = skipEnter
                 ? 1.0
                 : (gestureDriven ? raw : _curved(widget.animation, raw));
@@ -601,7 +630,7 @@ class _MiuixPageTransitionState extends State<MiuixPageTransition>
             // 被覆盖的那一页也能读到）。
             final coverAnimation = coverDriver ?? widget.secondaryAnimation;
             final rawCover = coverAnimation.value;
-            final cover = widget.route.popGestureInProgress
+            final cover = gestureDriven
                 ? rawCover
                 : _curved(coverAnimation, rawCover);
             final page = child ?? const SizedBox.shrink();

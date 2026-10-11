@@ -27,6 +27,8 @@
 - **Android 包名改为 `com.example.pilinara.miuix`**：本构建与官方 PiliNara 用不同的包名，可以同时安装、互不覆盖；`namespace`（Kotlin/Java 包名与 R 类）保持上游不变，provider 权限声明用的是 `${applicationId}` 占位符，会跟着一起变。
 
 ### Fixed
+- **返回动画还没播完，页面全都点不动**：miuix 只在**手势进行中**屏蔽页面内的点击与滚动（「在释放前，页面内的点击/滚动都被屏蔽」），抬手那一刻手势就不再拥有指针。我这边把手势落位（弹簧）也算进了手势，于是 `navigator.userGestureInProgress` 一直保持到落位结束——而 `_ModalScopeState` 会把**每一条路由**包进 `IgnorePointer(ignoring: route.animation.status == reverse || navigator.userGestureInProgress)`，结果抬手后到动画播完这一段时间里所有页面都点不动。现在抬手（或平台的预测返回终局信号）即解除手势标记，落位弹簧继续自己跑；渲染改用 controller 里单独的「手驱动」信号，被覆盖页照样 1:1 跟手，不过插值器。
+- **长按首页卡片会让整个界面往左偏、还压暗**：这是上一版（`.15`）引入的回归。补被覆盖页驱动时我漏了一件事——对话框、底部弹层这类 popup 路由**框架本来就不会**驱动被覆盖页（它们有自己的遮罩），而我按「框架不驱动就补上」的同一判据补了，于是 `Get.key.currentState!.push(PublishRoute(...))`（首页卡片长按弹出的保存卡片就是这条）、`showDialog`、`showModalBottomSheet` 都会把底下的页面整块往左推 1/4 屏宽并压暗 50%。现在补驱动的条件是「上下两层都是整屏 `PageRoute`」，popup 路由不再参与页面级几何（有测试覆盖 dialog / sheet / `PublishRoute` 三种）。
 - **点其他标签时第一个标签也出现点击效果**：按压反馈的叠加色画在了「共享 Material 的局部原点」上——ink feature 的坐标是参照盒自己的局部坐标，必须把 Flutter 传进 `paintFeature` 的 `transform` 应用到画布上（Flutter 的 `paintInkCircle` 就是这么做的），我漏了这一步，于是底栏/标签栏这类多个 `InkWell` 共用一个 `Material` 的地方，任何一处点击都会在**第一个**控件上出现叠加色。现在改走 SDK 的 `paintInkCircle`（大半径 + 裁到控件自身的矩形/形状），叠加色只出现在被按下的那个控件上。
 - **按住期间没有按压反馈**：之前把淡入放在 `confirm()` 里，而 Flutter 只在“点按被确认”（抬手）时才调它，所以按住不动的时候叠加色一直是透明的。现在 ink feature 创建（手指按下）即淡入，`confirm()` / `cancel()` 都只负责按退出时长淡出。
 - **切换标签页后上一个标签上留下色块**：miuix 的按压反馈之前只在 `confirm()` 里淡入、没有淡出，而 Flutter 的 `InkWell` 在点按成功时只会调 `confirm()`、不会再调 `cancel()`，于是那层 10% 叠加色永久留在被点过的控件上（表现就是切走以后前一个标签页上还剩一块色）。现在 `confirm()` 自己安排「先淡入、再按退出时长淡出」，动画结束后释放 ink feature，并且叠加色的透明度也按 miuix 的减速曲线走。
