@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:PiliPlus/utils/miuix/miuix_colors.dart';
 import 'package:PiliPlus/utils/miuix/miuix_drag_handle.dart';
+import 'package:PiliPlus/utils/miuix/miuix_blur.dart';
 import 'package:PiliPlus/utils/miuix/miuix_icon.dart';
 import 'package:PiliPlus/utils/miuix/miuix_shapes.dart';
 import 'package:PiliPlus/utils/miuix/miuix_squircle.dart';
@@ -201,6 +202,100 @@ void main() {
       // ignore: avoid_print
       print('captured icons ${entry.$1}');
     }
+  });
+
+  // 背景模糊与渐变模糊：底图放大到能看出糊掉的细节，左边普通模糊、右边上强下弱。
+  testWidgets('miuix 背景模糊预览', (tester) async {
+    await tester.runAsync(() async {
+      final bytes = await File(r'C:\Windows\Fonts\simhei.ttf').readAsBytes();
+      final loader = FontLoader(_fontFamily)
+        ..addFont(Future.value(ByteData.sublistView(Uint8List.fromList(bytes))));
+      await loader.load();
+    });
+    tester.view.physicalSize = const Size(760, 420);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+
+    const stripes = <Color>[
+      Color(0xFF3482FF),
+      Color(0xFFFF6699),
+      Color(0xFF5CB67B),
+      Color(0xFFFF9800),
+      Color(0xFF9C27B0),
+      Color(0xFF00BCD4),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: MiuixTheme.getThemeData(
+          colors: MiuixColors.light,
+          fontFamily: _fontFamily,
+        ),
+        home: Scaffold(
+          body: Stack(
+            children: [
+              // 被模糊的底图
+              Positioned.fill(
+                child: Row(
+                  children: [
+                    for (final color in stripes)
+                      Expanded(child: ColoredBox(color: color)),
+                  ],
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 16),
+                  child: SizedBox(
+                    width: 150,
+                    height: 120,
+                    child: MiuixBackdrop(
+                      borderRadius: BorderRadius.circular(16),
+                      tint: Colors.white.withValues(alpha: 0.35),
+                      child: const Center(child: Text('背景模糊 20dp')),
+                    ),
+                  ),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 16),
+                  child: SizedBox(
+                    width: 150,
+                    height: 120,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: MiuixProgressiveBlur(
+                        maxRadius: MiuixBlur.radius,
+                        tint: Colors.white.withValues(alpha: 0.25),
+                        child: const Align(
+                          alignment: Alignment.bottomCenter,
+                          child: Padding(
+                            padding: EdgeInsets.only(bottom: 8),
+                            child: Text('渐变模糊'),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    await expectLater(
+      find.byType(Scaffold),
+      matchesGoldenFile('goldens/miuix_blur.png'),
+    );
+    // ignore: avoid_print
+    print('captured blur');
   });
 
   // 按压反馈：点一下之后必须淡出（否则会在被点过的标签上留一块色），按住时才显示叠加色。

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:PiliPlus/utils/extension/theme_ext.dart';
+import 'package:PiliPlus/utils/miuix/miuix_blur.dart';
 import 'package:material_ui/material_ui.dart';
 
 const double _kMaxLabelTextScaleFactor = 1.3;
@@ -94,15 +95,19 @@ class FloatingNavigationBar extends StatelessWidget {
                   navigationBarTheme.surfaceTintColor ??
                   defaults.surfaceTintColor,
               elevation ?? navigationBarTheme.elevation ?? defaults.elevation!,
-            ),
+            ).withValues(alpha: 0.82),
             shape: RoundedSuperellipseBorder(
               side: defaults.borderSide,
               borderRadius: _kBorderRadius,
             ),
           ),
-          child: Padding(
-            padding: _kIndicatorPadding,
-            child: Row(
+          // MIUI 的浮起栏：底色半透明 + 背景模糊（miuix 的默认半径 20dp）。
+          child: MiuixBackdrop(
+            radius: MiuixBlur.radius,
+            borderRadius: _kBorderRadius,
+            child: Padding(
+              padding: _kIndicatorPadding,
+              child: Row(
               crossAxisAlignment: .stretch,
               children: <Widget>[
                 for (int i = 0; i < destinations.length; i++)
@@ -130,9 +135,10 @@ class FloatingNavigationBar extends StatelessWidget {
                   ),
               ],
             ),
+              ),
+            ),
           ),
         ),
-      ),
     );
   }
 }
